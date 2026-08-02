@@ -124,99 +124,221 @@ describe('DCR metadata policy', () => {
 });
 
 describe('OAuth consent CSRF protection', () => {
-  it('keeps two consent tokens valid independently and rejects unknown or absent tokens', async () => {
-    let completedAuthorizations = 0;
-    const env = {
-      AUTH_REQUIRED: 'false',
-      OAUTH_PROVIDER: {
-        lookupClient: async () => client(),
-        parseAuthRequest: async () => authorizationRequest(),
-        completeAuthorization: async () => {
-          completedAuthorizations += 1;
-          return { redirectTo: 'https://client.example/callback?code=code-1' };
-        },
+  const makeEnv = (completed: { count: number }) => ({
+    AUTH_REQUIRED: 'false',
+    OAUTH_PROVIDER: {
+      lookupClient: async () => client(),
+      parseAuthRequest: async () => authorizationRequest(),
+      completeAuthorization: async () => {
+        completed.count += 1;
+        return { redirectTo: 'https://client.example/callback?code=code-1' };
       },
-    } as unknown as Env;
-    const request = new Request('https://lifegame.example/authorize');
-    const fetchAuthorize = (authorizationRequest: Request) =>
-      defaultHandler.fetch!(
-        authorizationRequest as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
-        env,
-        {} as ExecutionContext,
-      );
+    },
+  }) as unknown as Env;
 
-    const firstPage = await fetchAuthorize(request);
-    const firstToken = (await firstPage.text()).match(/name="csrf_token" value="([^"]+)"/)?.[1];
+  const fetchAuthorize = (request: Request, env: Env) =>
+    defaultHandler.fetch!(
+      request as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
+      env,
+      {} as ExecutionContext,
+    );
+
+  it('keeps concurrent consent flows valid when both GETs see the same cookie state', async () => {
+    const completed = { count: 0 };
+    const env = makeEnv(completed);
+    const priorCookie = '__Host-lifegame-consent-csrf=00000000-0000-4000-8000-000000000000';
+    const firstPage = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', { headers: { Cookie: priorCookie } }),
+      env,
+    );
+    const secondPage = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', { headers: { Cookie: priorCookie } }),
+      env,
+    );
+    const firstHtml = await firstPage.text();
+    const secondHtml = await secondPage.text();
+    const firstFlowId = firstHtml.match(/name="flow_id" value="([^"]+)"/)?.[1];
+    const secondFlowId = secondHtml.match(/name="flow_id" value="([^"]+)"/)?.[1];
+    const firstToken = firstHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1];
+    const secondToken = secondHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1];
     const firstCookie = firstPage.headers.get('Set-Cookie');
+    const secondCookie = secondPage.headers.get('Set-Cookie');
+    expect(firstFlowId).toBeTruthy();
+    expect(secondFlowId).toBeTruthy();
+    expect(firstFlowId).not.toBe(secondFlowId);
     expect(firstToken).toBeTruthy();
-    expect(firstCookie).toContain('__Host-lifegame-consent-csrf=');
+    expect(secondToken).toBeTruthy();
+    expect(firstToken).not.toBe(secondToken);
+    expect(firstCookie).toContain(`__Host-lifegame-consent-${firstFlowId}=${firstToken}`);
+    expect(secondCookie).toContain(`__Host-lifegame-consent-${secondFlowId}=${secondToken}`);
     expect(firstCookie).toContain('Secure');
     expect(firstCookie).toContain('HttpOnly');
     expect(firstCookie).toContain('SameSite=Lax');
     expect(firstCookie).toContain('Path=/');
 
-    const secondPage = await fetchAuthorize(
-      new Request('https://lifegame.example/authorize', {
-        headers: { Cookie: firstCookie?.split(';')[0] ?? '' },
-      }),
-    );
-    const secondToken = (await secondPage.text()).match(/name="csrf_token" value="([^"]+)"/)?.[1];
-    const secondCookie = secondPage.headers.get('Set-Cookie')?.split(';')[0];
-    expect(secondToken).toBeTruthy();
-    expect(secondToken).not.toBe(firstToken);
-    expect(secondCookie).toContain(firstToken);
-    expect(secondCookie).toContain(secondToken);
+    const cookieJar = new Map<string, string>();
+    const applySetCookie = (setCookie: string | null) => {
+      if (!setCookie) return;
+      const pair = setCookie.split(';', 1)[0];
+      const separator = pair.indexOf('=');
+      if (separator === -1) return;
+      const name = pair.slice(0, separator);
+      const value = pair.slice(separator + 1);
+      if (setCookie.includes('Max-Age=0')) cookieJar.delete(name);
+      else cookieJar.set(name, value);
+    };
+    const cookieHeader = () => [...cookieJar].map(([name, value]) => `${name}=${value}`).join('; ');
+    applySetCookie(`${priorCookie}; Path=/`);
+    applySetCookie(firstCookie);
+    applySetCookie(secondCookie);
 
     const firstPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
-        headers: {
-          Cookie: secondCookie ?? '',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `decision=approve&csrf_token=${encodeURIComponent(firstToken ?? '')}`,
+        headers: { Cookie: cookieHeader(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `decision=approve&flow_id=${encodeURIComponent(firstFlowId ?? '')}&csrf_token=${encodeURIComponent(firstToken ?? '')}`,
       }),
+      env,
     );
     expect(firstPost.status).toBe(302);
-    const remainingCookie = firstPost.headers.get('Set-Cookie')?.split(';')[0];
-    expect(remainingCookie).toContain(secondToken);
-    expect(remainingCookie).not.toContain(firstToken);
+    expect(firstPost.headers.get('Set-Cookie')).toContain(`__Host-lifegame-consent-${firstFlowId}=;`);
+    expect(firstPost.headers.get('Set-Cookie')).not.toContain(`__Host-lifegame-consent-${secondFlowId}=;`);
+    applySetCookie(firstPost.headers.get('Set-Cookie'));
 
     const secondPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
-        headers: {
-          Cookie: remainingCookie ?? '',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `decision=approve&csrf_token=${encodeURIComponent(secondToken ?? '')}`,
+        headers: { Cookie: cookieHeader(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `decision=approve&flow_id=${encodeURIComponent(secondFlowId ?? '')}&csrf_token=${encodeURIComponent(secondToken ?? '')}`,
       }),
+      env,
     );
     expect(secondPost.status).toBe(302);
     expect(secondPost.headers.get('Set-Cookie')).toContain('Max-Age=0');
-    expect(completedAuthorizations).toBe(2);
+    expect(completed.count).toBe(2);
+  });
+
+  it('supports sequential flows and rejects absent, unknown, mismatched, and malformed submissions', async () => {
+    const completed = { count: 0 };
+    const env = makeEnv(completed);
+    const firstPage = await fetchAuthorize(new Request('https://lifegame.example/authorize'), env);
+    const firstHtml = await firstPage.text();
+    const firstFlowId = firstHtml.match(/name="flow_id" value="([^"]+)"/)?.[1] ?? '';
+    const firstToken = firstHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    const firstCookie = firstPage.headers.get('Set-Cookie')?.split(';', 1)[0] ?? '';
+
+    const secondPage = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', { headers: { Cookie: firstCookie } }),
+      env,
+    );
+    const secondHtml = await secondPage.text();
+    const secondFlowId = secondHtml.match(/name="flow_id" value="([^"]+)"/)?.[1] ?? '';
+    const secondToken = secondHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    const secondCookie = secondPage.headers.get('Set-Cookie')?.split(';', 1)[0] ?? '';
+    const bothCookies = `${firstCookie}; ${secondCookie}`;
+
+    const firstPost = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        method: 'POST',
+        headers: { Cookie: bothCookies, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `decision=approve&flow_id=${encodeURIComponent(firstFlowId)}&csrf_token=${encodeURIComponent(firstToken)}`,
+      }),
+      env,
+    );
+    expect(firstPost.status).toBe(302);
+    expect(firstPost.headers.get('Set-Cookie')).toContain(`__Host-lifegame-consent-${firstFlowId}=;`);
+    expect(firstPost.headers.get('Set-Cookie')).not.toContain(`__Host-lifegame-consent-${secondFlowId}=;`);
+
+    const secondPost = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        method: 'POST',
+        headers: { Cookie: secondCookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `decision=approve&flow_id=${encodeURIComponent(secondFlowId)}&csrf_token=${encodeURIComponent(secondToken)}`,
+      }),
+      env,
+    );
+    expect(secondPost.status).toBe(302);
+    expect(completed.count).toBe(2);
 
     const unknownTokenPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
-        headers: {
-          Cookie: secondCookie ?? '',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: 'decision=approve&csrf_token=00000000-0000-4000-8000-000000000000',
+        headers: { Cookie: secondCookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `decision=approve&flow_id=${encodeURIComponent(secondFlowId)}&csrf_token=00000000-0000-4000-8000-000000000000`,
       }),
+      env,
     );
     expect(unknownTokenPost.status).toBe(400);
     await expect(unknownTokenPost.text()).resolves.toBe('Invalid consent form');
+
+    const mismatchedTokenPost = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        method: 'POST',
+        headers: { Cookie: secondCookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `decision=approve&flow_id=${encodeURIComponent(secondFlowId)}&csrf_token=${encodeURIComponent(firstToken)}`,
+      }),
+      env,
+    );
+    expect(mismatchedTokenPost.status).toBe(400);
+    await expect(mismatchedTokenPost.text()).resolves.toBe('Invalid consent form');
 
     const absentTokenPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'decision=approve',
+        body: 'decision=approve&csrf_token=00000000-0000-4000-8000-000000000000',
       }),
+      env,
     );
     expect(absentTokenPost.status).toBe(400);
     await expect(absentTokenPost.text()).resolves.toBe('Invalid consent form');
+
+    const malformedFlowPost = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'decision=approve&flow_id=not-a-valid-flow-id&csrf_token=00000000-0000-4000-8000-000000000000',
+      }),
+      env,
+    );
+    expect(malformedFlowPost.status).toBe(400);
+    await expect(malformedFlowPost.text()).resolves.toBe('Invalid consent form');
+  });
+});
+
+describe('OAuth redirect validation', () => {
+  const fetchParseError = async (registeredUri: string, requestedUri: string) => {
+    const env = {
+      AUTH_REQUIRED: 'false',
+      OAUTH_PROVIDER: {
+        lookupClient: async () => client({ redirectUris: [registeredUri] }),
+        parseAuthRequest: async () => {
+          throw new Error('invalid authorization request');
+        },
+      },
+    } as unknown as Env;
+    const params = new URLSearchParams({
+      client_id: 'client-1',
+      redirect_uri: requestedUri,
+      response_type: 'code',
+      state: 'state-1',
+    });
+    return defaultHandler.fetch!(
+      new Request(`https://lifegame.example/authorize?${params}`) as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
+      env,
+      {} as ExecutionContext,
+    );
+  };
+
+  it('accepts a different port for bracketed IPv6 loopback callbacks', async () => {
+    const response = await fetchParseError('http://[::1]:5678/cb', 'http://[::1]:1234/cb');
+    expect(response.status).toBe(302);
+    expect(response.headers.get('Location')).toContain('http://[::1]:1234/cb');
+    expect(response.headers.get('Location')).toContain('error=invalid_request');
+  });
+
+  it('requires exact matching for non-loopback callback hosts', async () => {
+    const response = await fetchParseError('https://client.example:5678/cb', 'https://client.example:1234/cb');
+    expect(response.status).toBe(400);
   });
 });
