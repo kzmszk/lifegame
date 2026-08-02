@@ -50,7 +50,7 @@ React + Vite の SPA を1本作り、Worker から静的アセットとして配
 
 ```
 [ブラウザ (スマホ/PC, PWA)]
-   │  HTML (SSR) / form POST / fetch
+   │  静的アセット取得 / fetch (JSON API)
    ▼
 [Cloudflare Access]  ← 自分のアカウントだけ通す
    ▼
