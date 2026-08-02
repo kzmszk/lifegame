@@ -44,3 +44,68 @@ npx wrangler deploy
 ```
 
 `wrangler deploy` は設定済みの `npm run build` を先に実行するため、クリーン checkout でも `public/` 以下の SPA アセットが生成される。
+
+## Phase 4: MCP と Claude
+
+Remote MCP は `@cloudflare/workers-oauth-provider`、Cloudflare Agents の `McpAgent`、
+`@modelcontextprotocol/sdk`、`zod` を使う。依存関係は `package.json` に固定している。
+`McpAgent` は現在のAgents SDKではレガシー互換の位置づけだが、Phase 4の設計どおり
+Streamable HTTPとDurable Objectを使うために採用している。
+
+初回デプロイ前にOAuth用KVとMCP用Durable Objectを準備する。KVのIDを
+`wrangler.jsonc` の全ゼロの `OAUTH_KV.id` に置き換え、D1のIDも同様に置き換える。
+Durable Objectのクラスとmigrationは設定済みなので、追加の手動作成は不要。
+
+`workers.dev` とPreview URLはAccessの対象外になりうるため無効化してある。そのため公開ホスト名は
+`wrangler.jsonc` の `routes` で明示する必要がある。`lifegame.example.com` のプレースホルダを
+Cloudflareに登録済みの自分のドメインへ置き換えてからデプロイすること
+(置き換えないままデプロイすると、公開ホスト名を持たないWorkerになる)。
+
+```sh
+npx wrangler kv namespace create OAUTH_KV
+# wrangler.jsonc の OAUTH_KV.id に上記コマンドのIDを設定
+# wrangler.jsonc の routes[0].pattern を自分のカスタムドメインに設定
+npx wrangler d1 migrations apply lifegame --remote
+npx wrangler deploy
+```
+
+Cloudflare Zero TrustのAccessアプリでは、MCPのOAuthプロトコルをAccessのログイン画面で
+遮らないよう、次のパスをPublic/BYPASSのパスルールに追加する。
+
+- `/mcp`
+- `/.well-known/*`
+- `/register`
+- `/token`
+
+`/authorize` は除外しない。認可画面はAccess配下に残り、Worker側でも
+`Cf-Access-Authenticated-User-Email` と `ALLOWED_EMAIL` を検証する。`/mcp` のタスクデータは
+Cloudflare OAuthのBearer tokenが必須で、DCR・メタデータ・tokenエンドポイントだけが公開される。
+既存の `/api/*` とSPAの保護設定は変更しない。
+
+公開するホスト名は、カスタムドメインを含めてすべてCloudflare Accessアプリの対象にする。
+`wrangler.jsonc` では意図しない `workers.dev` とPreview URLも無効化している。AccessのBYPASSは
+上記のOAuthプロトコル用パスだけに限定すること。WorkerはAccessの前段検証を設計契約としており、
+`Cf-Access-Jwt-Assertion` の署名・issuer・audienceをWorker内で再検証する処理は将来のハードニング課題として残している。
+
+公開DCRの悪用を抑えるため、Cloudflareダッシュボード側で `/register` にIP単位のレート制限/WAFルールを
+設定する（例: POSTを1分あたり10件でchallengeまたはblock）。コード側でもメタデータの文字列・配列サイズを
+制限し、登録クライアントのTTLを7日に短縮している。可能なら、運用するClaude等の既知のコールバックURIだけを
+許可するルールもダッシュボードまたは登録ポリシーに追加する。
+
+デプロイ後、Claudeアプリの設定からカスタムコネクタ/Integrationsとして
+`https://<workerのホスト名>/mcp` を追加する。OAuthの登録・ログイン・同意画面が順に開くので、
+lifegameの接続を許可する。Claude Codeでは次のようにHTTP MCPサーバーとして登録する。
+
+```sh
+claude mcp add --transport http lifegame https://<workerのホスト名>/mcp
+```
+
+その後Claude Codeを起動し、`/mcp` を実行して `lifegame` を選び、ブラウザのOAuth認証を完了する。
+
+接続後は、`get_daily_summary`、`list_tasks`、`create_task`、`update_task`、`delete_task` が使える。
+朝の定型文は [skills/morning-briefing/SKILL.md](skills/morning-briefing/SKILL.md) を含むフォルダをZIPにして
+claude.aiのSkills設定からアップロードする。
+
+```sh
+cd skills && zip -r ../morning-briefing.zip morning-briefing
+```
