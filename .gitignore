@@ -141,3 +141,9 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Cloudflare local state, local bindings, and generated frontend output
+.wrangler/
+.dev.vars
+/public/
+*.local

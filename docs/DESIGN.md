@@ -84,6 +84,8 @@ wrangler.jsonc
 
 - wrangler の assets 設定で `run_worker_first: ["/api/*"]` とし、それ以外は静的配信。
   `not_found_handling: "single-page-application"` で SPA のルーティングにフォールバックさせる
+- `wrangler.jsonc` の `build.command` (`npm run build`) でデプロイ前に `public/` 全体を生成する。
+  `public/` は生成物として git 管理せず、入力となる SPA ソースは `web/` に置く
 - API のリクエスト/レスポンス型は `src/shared/types.ts` に置き、SPA からも import して型を揃える
 
 ## 5. データモデル (Phase 1)
@@ -154,6 +156,9 @@ SPA が利用する JSON API。
   完了日時の当日判定の両方に適用する。D1/SQLite の `date('now')` は UTC のため使わず、
   Worker 側で JST の「今日」を計算してクエリパラメータとして渡す(UTCのままだと 00:00〜08:59 JST に当日タスクが表示されない)
 
+- **月日だけの過去日付は翌年に繰り上げる**: たとえば 8 月 2 日に「8 月 1 日」と指定した場合は、翌年の 8 月 1 日として扱う。
+  その繰り上げ後の対象年で実在日付かどうかを検証する
+
 ## 8. 音声入力の設計
 
 1. クイック追加の🎤ボタン → Web Speech API (`SpeechRecognition`, `lang: 'ja-JP'`) で認識
@@ -161,6 +166,7 @@ SPA が利用する JSON API。
 3. サーバー側 `lib/parse.ts` がルールベースで期限を抽出し、`TaskDraft` を返す
    - 例: 「明日の15時に歯医者」→ `{ title: '歯医者', due_date: <明日>, due_time: '15:00' }`
    - 対応パターン: 今日 / 明日 / 明後日 / ◯曜日 / 来週 / ◯月◯日 / ◯時(半)
+   - 「来週」は月曜始まりで計算する。日曜日に「来週の月曜」と言った場合は翌日の月曜を指す
    - 解析できない部分はそのままタイトルに残す(壊れない設計)
 4. 確認UIに `TaskDraft` を表示し、誤認識はその場で修正 → 確定操作で `POST /api/tasks` に送信して保存する
 
