@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it, vi } from 'vitest';
-import app from '../index';
+import { app } from '../app';
 
 function env(overrides: Record<string, unknown> = {}) {
   return {

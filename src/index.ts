@@ -1,25 +1,21 @@
-import { Hono } from 'hono';
-import api from './routes/api';
+import { OAuthProvider } from '@cloudflare/workers-oauth-provider';
+import { app } from './app';
+import type { Env } from './env';
+import { defaultHandler } from './oauth';
+import { LifegameMcp } from './mcp/server';
 
-export interface Env {
-  DB: D1Database;
-  ASSETS: Fetcher;
-  AUTH_REQUIRED?: string;
-  ALLOWED_EMAIL?: string;
-}
+export { app };
+export type { Env } from './env';
+export { LifegameMcp } from './mcp/server';
 
-const app = new Hono<{ Bindings: Env }>();
-
-app.route('/api', api);
-
-// The mounted API router handles /api/*; keep the bare prefix JSON-only too.
-app.all('/api', (c) => c.json({ error: 'API endpoint が見つかりません' }, 404));
-
-app.all('*', async (c) => c.env.ASSETS.fetch(c.req.raw));
-
-app.onError((err, c) => {
-  console.error(err);
-  return c.json({ error: 'サーバーでエラーが発生しました' }, 500);
+// OAuthProvider is the Worker entrypoint. It owns OAuth metadata, DCR, token
+// exchange, and the protected MCP route; the existing Hono app remains the
+// fallback for the SPA and /api/* routes.
+export default new OAuthProvider<Env>({
+  apiHandlers: { '/mcp': LifegameMcp.serve('/mcp') },
+  defaultHandler,
+  authorizeEndpoint: '/authorize',
+  tokenEndpoint: '/token',
+  clientRegistrationEndpoint: '/register',
+  scopesSupported: ['tasks:read', 'tasks:write'],
 });
-
-export default app;
