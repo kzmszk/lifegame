@@ -140,19 +140,29 @@ SPA が利用する JSON API。
 |---------------|------|
 | `GET /api/tasks?view=today\|inbox\|all` | タスク一覧の取得 |
 | `GET /api/tasks/:id` | タスク1件の取得 |
+| `POST /api/tasks/parse` | テキスト解析のみ(**保存しない**)。`{ text }` を受け取り `TaskDraft` を返す。音声入力の確認UI用 |
 | `POST /api/tasks` | タスク作成。`{ text }` を受け取りパーサーで期限抽出、または構造化済み `{ title, due_date, ... }` |
 | `PATCH /api/tasks/:id` | 更新(完了トグル含む) |
 | `DELETE /api/tasks/:id` | 削除 |
 
+### API契約の補足
+
+- **`completed_at` は `status` と連動させる**: `PATCH` で `status` を `done` にする際は同一UPDATE文の中で
+  `completed_at` に現在時刻を設定し、`open` に戻す際は `NULL` にクリアする(クライアントからは送らせない)。
+  今日ビューの「今日完了したタスク」はこの `completed_at` で判定するため、この契約がないと完了タスクが再読み込みで消える
+- **「今日」の判定は Asia/Tokyo の日付境界で行う**: `view=today` の期限カットオフ(`due_date <= 今日`)と
+  完了日時の当日判定の両方に適用する。D1/SQLite の `date('now')` は UTC のため使わず、
+  Worker 側で JST の「今日」を計算してクエリパラメータとして渡す(UTCのままだと 00:00〜08:59 JST に当日タスクが表示されない)
+
 ## 8. 音声入力の設計
 
 1. クイック追加の🎤ボタン → Web Speech API (`SpeechRecognition`, `lang: 'ja-JP'`) で認識
-2. 認識テキストを `POST /api/tasks` に送信
-3. サーバー側 `lib/parse.ts` がルールベースで期限を抽出してタスク化
+2. 認識テキストを `POST /api/tasks/parse` に送信(**この時点ではまだ保存しない**)
+3. サーバー側 `lib/parse.ts` がルールベースで期限を抽出し、`TaskDraft` を返す
    - 例: 「明日の15時に歯医者」→ `{ title: '歯医者', due_date: <明日>, due_time: '15:00' }`
    - 対応パターン: 今日 / 明日 / 明後日 / ◯曜日 / 来週 / ◯月◯日 / ◯時(半)
    - 解析できない部分はそのままタイトルに残す(壊れない設計)
-4. 登録前に確認UIを一瞬挟み、誤認識はその場で修正できるようにする
+4. 確認UIに `TaskDraft` を表示し、誤認識はその場で修正 → 確定操作で `POST /api/tasks` に送信して保存する
 
 日付パーサーはタイムゾーン(Asia/Tokyo)を固定して判定する。
 Phase 4 でこのパーサーを LLM に差し替え可能なよう、`parse(text) → TaskDraft` のインターフェースに閉じ込める。
