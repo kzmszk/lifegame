@@ -58,6 +58,21 @@ describe('OAuth authorization policy', () => {
 });
 
 describe('DCR metadata policy', () => {
+  it('accepts realistic client metadata', () => {
+    expect(
+      validateClientRegistrationMetadata({
+        client_name: 'LifeGame',
+        redirect_uris: ['https://client.example/oauth/callback'],
+        response_types: ['code'],
+        grant_types: ['authorization_code', 'refresh_token'],
+        token_endpoint_auth_method: 'none',
+        scope: 'tasks:read tasks:write',
+        logo_uri: 'https://client.example/logo.png',
+        contacts: ['security@client.example'],
+      }),
+    ).toBeUndefined();
+  });
+
   it('rejects oversized strings and arrays', () => {
     expect(validateClientRegistrationMetadata({ client_name: 'x'.repeat(2049) })?.code).toBe(
       'invalid_client_metadata',
@@ -65,7 +80,46 @@ describe('DCR metadata policy', () => {
     expect(validateClientRegistrationMetadata({ redirect_uris: Array.from({ length: 17 }, () => 'https://client.example') })?.code).toBe(
       'invalid_client_metadata',
     );
-    expect(validateClientRegistrationMetadata({ client_name: 'Claude', redirect_uris: ['https://client.example'] })).toBeUndefined();
+  });
+
+  it('rejects objects that exceed the key-length limit', () => {
+    expect(validateClientRegistrationMetadata({ ['k'.repeat(129)]: 'value' })).toEqual({
+      code: 'invalid_client_metadata',
+      description: 'metadata has a key that is too long',
+    });
+  });
+
+  it('rejects many small values that exceed the aggregate byte budget', () => {
+    const metadata = Object.fromEntries(
+      Array.from({ length: 32 }, (_, index) => [`field_${index}`, 'x'.repeat(600)]),
+    );
+
+    expect(validateClientRegistrationMetadata(metadata)?.description).toContain(
+      'total size limit',
+    );
+  });
+
+  it('rejects a node-count blowup even when each node is small', () => {
+    const metadata = {
+      branches: Array.from({ length: 2 }, () =>
+        Array.from({ length: 16 }, () => Array.from({ length: 16 }, () => 'x')),
+      ),
+    };
+
+    expect(validateClientRegistrationMetadata(metadata)?.description).toBe('metadata has more than 512 nodes');
+  });
+
+  it('still rejects oversized objects and deeply nested values', () => {
+    expect(
+      validateClientRegistrationMetadata(
+        Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`field_${index}`, 'value'])),
+      )?.code,
+    ).toBe('invalid_client_metadata');
+    expect(
+      validateClientRegistrationMetadata({
+        nested: { a: { b: { c: { d: { e: 'value' } } } } },
+      })?.code,
+    ).toBe('invalid_client_metadata');
   });
 });
 
