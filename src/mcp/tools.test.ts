@@ -260,6 +260,17 @@ describe('MCP tool handlers', () => {
     );
   });
 
+  it('rejects a no-op update so tasks:write cannot be used to read a task', async () => {
+    const db = new FakeD1([row({ id: 1 })]) as unknown as D1Database;
+
+    await expect(updateTaskForMcp(db, 1, {})).rejects.toThrow(
+      new McpToolError('更新する項目を1つ以上指定してください'),
+    );
+    await expect(updateTaskForMcp(db, 1, { title: undefined })).rejects.toThrow(
+      new McpToolError('更新する項目を1つ以上指定してください'),
+    );
+  });
+
   it('rejects completed_at on updates as well as creation', async () => {
     const db = new FakeD1([row({ id: 1 })]) as unknown as D1Database;
 

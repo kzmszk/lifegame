@@ -2,8 +2,17 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "lifegame",
   "main": "src/index.ts",
+  // workers.dev と Preview URL は Access の対象外になりうるため無効化している。
+  // そのぶん公開ホスト名は routes で明示する必要がある: 下の routes を自分のドメインに
+  // 置き換えてから deploy すること (未設定のままだと公開ホスト名のない Worker になる)。
   "workers_dev": false,
   "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "lifegame.example.com",
+      "custom_domain": true
+    }
+  ],
   "compatibility_date": "2025-04-01",
   "compatibility_flags": ["nodejs_compat"],
   "build": {

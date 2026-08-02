@@ -56,9 +56,15 @@ Streamable HTTPとDurable Objectを使うために採用している。
 `wrangler.jsonc` の全ゼロの `OAUTH_KV.id` に置き換え、D1のIDも同様に置き換える。
 Durable Objectのクラスとmigrationは設定済みなので、追加の手動作成は不要。
 
+`workers.dev` とPreview URLはAccessの対象外になりうるため無効化してある。そのため公開ホスト名は
+`wrangler.jsonc` の `routes` で明示する必要がある。`lifegame.example.com` のプレースホルダを
+Cloudflareに登録済みの自分のドメインへ置き換えてからデプロイすること
+(置き換えないままデプロイすると、公開ホスト名を持たないWorkerになる)。
+
 ```sh
 npx wrangler kv namespace create OAUTH_KV
 # wrangler.jsonc の OAUTH_KV.id に上記コマンドのIDを設定
+# wrangler.jsonc の routes[0].pattern を自分のカスタムドメインに設定
 npx wrangler d1 migrations apply lifegame --remote
 npx wrangler deploy
 ```

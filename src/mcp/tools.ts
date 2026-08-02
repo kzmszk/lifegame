@@ -89,6 +89,8 @@ export async function updateTaskForMcp(db: D1Database, id: number, input: unknow
   assertValidId(id);
   const body = omitUndefined(record(input));
   assertValidFields(body);
+  // A no-op update would return the task, turning tasks:write into a read.
+  if (Object.keys(body).length === 0) throw new McpToolError('更新する項目を1つ以上指定してください');
   const task = await updateTask(db, id, fieldsFromBody(body));
   if (!task) throw new McpToolError('タスクが見つかりません');
   return task;
