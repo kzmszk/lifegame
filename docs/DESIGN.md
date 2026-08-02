@@ -85,7 +85,8 @@ migrations/          # D1 マイグレーション SQL
 wrangler.jsonc
 ```
 
-- wrangler の assets 設定で `run_worker_first: ["/api/*"]` とし、それ以外は静的配信。
+- wrangler の assets 設定で `run_worker_first: ["/api/*"]` とし、それ以外は静的配信
+  (Phase 4 で `/mcp` と OAuth 系パスを `run_worker_first` に追加する。セクション10)。
   `not_found_handling: "single-page-application"` で SPA のルーティングにフォールバックさせる
 - `wrangler.jsonc` の `build.command` (`npm run build`) でデプロイ前に `public/` 全体を生成する。
   `public/` は生成物として git 管理せず、入力となる SPA ソースは `web/` に置く
@@ -182,7 +183,8 @@ MCP 経由の Claude が担うため、パーサーの LLM 差し替えは行わ
 - Cloudflare Access で Worker への全リクエストを保護し、自分のアカウントのみ許可する
 - アプリ側では認証コードを書かない(Access が JWT を検証済みの前提)
 - 念のため `Cf-Access-Authenticated-User-Email` ヘッダを検証するミドルウェアを1枚入れる
-- 例外: Phase 4 の `/mcp` だけは Access の保護対象から外し、MCP 標準の OAuth で保護する(セクション10)
+- 例外: Phase 4 では `/mcp` と OAuth プロトコル用エンドポイントを Access の保護対象から外し、
+  MCP 標準の OAuth で保護する。認可画面 `/authorize` だけは Access 配下に残す(セクション10)
 
 ## 10. Phase 4: MCP 連携の設計
 
@@ -215,8 +217,16 @@ Worker に MCP サーバー(`/mcp`)を追加し、Claude アプリ・Claude Code
 
 ### 認証
 
-- `/mcp` は Cloudflare Access の保護対象から外し、MCP 標準の OAuth(Dynamic Client Registration)で保護する。
-  実装は Cloudflare の `workers-oauth-provider` + agents SDK(`McpAgent`)を利用する
+- MCP 標準の OAuth(Dynamic Client Registration)で保護する。実装は Cloudflare の
+  `workers-oauth-provider` + agents SDK(`McpAgent`)を利用する
+- **Access の除外は `/mcp` だけでは足りない**: クライアントはトークン取得前に OAuth の
+  プロトコル用エンドポイントへアクセスするため、`/mcp` に加えて `/.well-known/*`(OAuthメタデータ)・
+  `/register`(DCR)・`/token` も Access の保護対象から外す
+- **認可画面 `/authorize` だけは Access 配下に残す**: クライアント登録は誰でもできるが、
+  認可を承認できるのは Access を通過した自分だけになり、リソースオーナーの認証を Access に委譲できる
+- **上記のパスはすべて `wrangler.jsonc` の `run_worker_first` に追加する**: 現状は `/api/*` のみのため、
+  追加しないと `/mcp` などへのリクエストは静的アセット配信と SPA フォールバックに吸われて
+  Worker のハンドラに到達しない
 - 無認証での公開はしない(タスク内容は個人情報そのもの)
 
 ### 朝のブリーフィング
@@ -249,8 +259,9 @@ Worker に MCP サーバー(`/mcp`)を追加し、Claude アプリ・Claude Code
 ### Phase 4 のタスク分解
 
 1. 最小 MCP サーバー: read 1個 + write 1個だけ実装し、Claude アプリ / ChatGPT から接続確認
-   (ChatGPT Plus での write 可否はここで白黒つける)
-2. OAuth 導入(`workers-oauth-provider`)と Cloudflare Access の `/mcp` 除外設定
+   (`run_worker_first` への `/mcp` 追加を含む。ChatGPT Plus での write 可否はここで白黒つける)
+2. OAuth 導入(`workers-oauth-provider`)、OAuth 系パスの `run_worker_first` 追加と
+   Cloudflare Access の除外設定(`/authorize` は Access 配下に残す)
 3. ツール一式の実装(`get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task`)
 4. ブリーフィング用スキル作成(`skills/morning-briefing/`)と実運用テスト
 5. claude.ai スケジュールタスクによる自動ブリーフィングの検討
