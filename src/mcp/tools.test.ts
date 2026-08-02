@@ -1,6 +1,19 @@
+// These tests cover the pure MCP tool/data boundary. Entrypoint-level OAuth,
+// fake KV, and Durable Object flow tests are intentionally deferred because
+// the pinned legacy McpAgent runtime requires Cloudflare Durable Object
+// primitives that Vitest's Node environment does not provide directly.
+
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { createTaskForMcp, getDailySummary, McpToolError, updateTaskForMcp } from './tools';
+import {
+  createTaskForMcp,
+  deleteTaskForMcp,
+  getDailySummary,
+  listTasksForMcp,
+  McpToolError,
+  updateTaskForMcp,
+} from './tools';
+import { assertMcpScope } from './auth';
 
 interface Row {
   id: number;
@@ -159,6 +172,35 @@ describe('MCP tool handlers', () => {
     expect(summary.completed_today_tasks.map((task) => task.title)).toEqual(['今日完了']);
   });
 
+  it('treats the JST day end as exclusive at 15:00 UTC', async () => {
+    const db = new FakeD1([
+      row({ id: 1, title: '開始時刻', status: 'done', completed_at: '2026-08-02 15:00:00' }),
+      row({ id: 2, title: '開始前', status: 'done', completed_at: '2026-08-02 14:59:59' }),
+      row({ id: 3, title: '終了直前', status: 'done', completed_at: '2026-08-03 14:59:59' }),
+      row({ id: 4, title: '終了時刻', status: 'done', completed_at: '2026-08-03 15:00:00' }),
+    ]) as unknown as D1Database;
+
+    const tasks = await listTasksForMcp(db, 'today', new Date('2026-08-03T14:59:59.999Z'));
+
+    expect(tasks.map((task) => task.title)).toEqual(['開始時刻', '終了直前']);
+  });
+
+  it('supports every list_tasks view and rejects an invalid view', async () => {
+    const db = new FakeD1([
+      row({ id: 1, title: '今日', due_date: '2026-08-03' }),
+      row({ id: 2, title: 'Inbox' }),
+      row({ id: 3, title: 'すべてのみ', due_date: '2026-08-10' }),
+    ]) as unknown as D1Database;
+    const now = new Date('2026-08-03T03:00:00.000Z');
+
+    expect((await listTasksForMcp(db, 'today', now)).map((task) => task.title)).toEqual(['今日']);
+    expect((await listTasksForMcp(db, 'inbox', now)).map((task) => task.title)).toEqual(['Inbox']);
+    expect((await listTasksForMcp(db, 'all', now)).map((task) => task.title)).toEqual(['今日', 'Inbox', 'すべてのみ']);
+    await expect(listTasksForMcp(db, 'invalid' as never, now)).rejects.toThrow(
+      new McpToolError('view は today, inbox, all のいずれかです'),
+    );
+  });
+
   it('validates structured creation fields before persistence', async () => {
     const db = new FakeD1([]) as unknown as D1Database;
 
@@ -173,6 +215,24 @@ describe('MCP tool handlers', () => {
     });
   });
 
+  it('applies the shared validation contract to every writable field', async () => {
+    const db = new FakeD1([]) as unknown as D1Database;
+    const invalidCases: Array<[Record<string, unknown>, string]> = [
+      [{ title: 'x', due_date: '2026-02-31' }, 'due_date'],
+      [{ title: 'x', due_time: '25:00' }, 'due_time'],
+      [{ title: ' ' }, 'title'],
+      [{ title: 'x', note: 1 }, 'note'],
+      [{ title: 'x', tags: 1 }, 'tags'],
+      [{ title: 'x', priority: 2 }, 'priority'],
+      [{ title: 'x', status: 'paused' }, 'status'],
+      [{ title: 'x', completed_at: null }, 'completed_at'],
+    ];
+
+    for (const [input, field] of invalidCases) {
+      await expect(createTaskForMcp(db, input)).rejects.toThrow(field);
+    }
+  });
+
   it('keeps completed_at coupled to status for MCP updates', async () => {
     const database = new FakeD1([row({ id: 1, title: '完了する' })]);
     const db = database as unknown as D1Database;
@@ -184,5 +244,39 @@ describe('MCP tool handlers', () => {
     const reopened = await updateTaskForMcp(db, 1, { status: 'open' });
     expect(reopened.status).toBe('open');
     expect(reopened.completed_at).toBeNull();
+  });
+
+  it('reports delete and update not-found cases and invalid IDs', async () => {
+    const db = new FakeD1([row({ id: 1 })]) as unknown as D1Database;
+
+    await expect(deleteTaskForMcp(db, 1)).resolves.toEqual({ deleted: true, id: 1 });
+    await expect(deleteTaskForMcp(db, 1)).rejects.toThrow(new McpToolError('タスクが見つかりません'));
+    await expect(updateTaskForMcp(db, 99, { title: 'なし' })).rejects.toThrow(
+      new McpToolError('タスクが見つかりません'),
+    );
+    await expect(updateTaskForMcp(db, 0, { title: '不正' })).rejects.toThrow(new McpToolError('タスクIDが不正です'));
+    await expect(updateTaskForMcp(db, Number.MAX_SAFE_INTEGER + 1, { title: '不正' })).rejects.toThrow(
+      new McpToolError('タスクIDが不正です'),
+    );
+  });
+
+  it('rejects completed_at on updates as well as creation', async () => {
+    const db = new FakeD1([row({ id: 1 })]) as unknown as D1Database;
+
+    await expect(updateTaskForMcp(db, 1, { completed_at: '2026-08-03 00:00:00' })).rejects.toThrow(
+      new McpToolError('completed_at はクライアントから指定できません'),
+    );
+  });
+
+  it('does not allow a read-scoped token to mutate tasks', () => {
+    const readOnlyProps = { email: 'owner@example.com', scopes: ['tasks:read'] };
+
+    expect(() => assertMcpScope(readOnlyProps, 'tasks:read')).not.toThrow();
+    expect(() => assertMcpScope(readOnlyProps, 'tasks:write')).toThrow(
+      new McpToolError('この操作には tasks:write スコープが必要です'),
+    );
+    expect(() => assertMcpScope(undefined, 'tasks:read')).toThrow(
+      new McpToolError('この操作には tasks:read スコープが必要です'),
+    );
   });
 });

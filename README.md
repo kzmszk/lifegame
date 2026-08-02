@@ -76,6 +76,16 @@ Cloudflare Zero TrustのAccessアプリでは、MCPのOAuthプロトコルをAcc
 Cloudflare OAuthのBearer tokenが必須で、DCR・メタデータ・tokenエンドポイントだけが公開される。
 既存の `/api/*` とSPAの保護設定は変更しない。
 
+公開するホスト名は、カスタムドメインを含めてすべてCloudflare Accessアプリの対象にする。
+`wrangler.jsonc` では意図しない `workers.dev` とPreview URLも無効化している。AccessのBYPASSは
+上記のOAuthプロトコル用パスだけに限定すること。WorkerはAccessの前段検証を設計契約としており、
+`Cf-Access-Jwt-Assertion` の署名・issuer・audienceをWorker内で再検証する処理は将来のハードニング課題として残している。
+
+公開DCRの悪用を抑えるため、Cloudflareダッシュボード側で `/register` にIP単位のレート制限/WAFルールを
+設定する（例: POSTを1分あたり10件でchallengeまたはblock）。コード側でもメタデータの文字列・配列サイズを
+制限し、登録クライアントのTTLを7日に短縮している。可能なら、運用するClaude等の既知のコールバックURIだけを
+許可するルールもダッシュボードまたは登録ポリシーに追加する。
+
 デプロイ後、Claudeアプリの設定からカスタムコネクタ/Integrationsとして
 `https://<workerのホスト名>/mcp` を追加する。OAuthの登録・ログイン・同意画面が順に開くので、
 lifegameの接続を許可する。Claude Codeでは次のようにHTTP MCPサーバーとして登録する。
@@ -84,5 +94,12 @@ lifegameの接続を許可する。Claude Codeでは次のようにHTTP MCPサ�
 claude mcp add --transport http lifegame https://<workerのホスト名>/mcp
 ```
 
+その後Claude Codeを起動し、`/mcp` を実行して `lifegame` を選び、ブラウザのOAuth認証を完了する。
+
 接続後は、`get_daily_summary`、`list_tasks`、`create_task`、`update_task`、`delete_task` が使える。
-朝の定型文は [skills/morning-briefing/SKILL.md](skills/morning-briefing/SKILL.md) をClaudeのスキルとして登録する。
+朝の定型文は [skills/morning-briefing/SKILL.md](skills/morning-briefing/SKILL.md) を含むフォルダをZIPにして
+claude.aiのSkills設定からアップロードする。
+
+```sh
+cd skills && zip -r ../morning-briefing.zip morning-briefing
+```

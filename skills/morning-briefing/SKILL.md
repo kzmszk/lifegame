@@ -1,3 +1,8 @@
+---
+name: morning-briefing
+description: Use when the user asks for today's lifegame briefing or morning task summary.
+---
+
 # lifegame 朝のブリーフィング
 
 「今日のブリーフィングをして」と依頼されたら、まず `get_daily_summary` を1回呼び出す。
@@ -9,7 +14,7 @@
 2. `### 期限切れ` — `overdue_tasks` を優先度と期限つきで列挙。なければ「なし」
 3. `### 今日の予定` — `due_today_tasks` を時刻順で列挙。なければ「なし」
 4. `### Inbox` — `inbox_count` 件。多い場合だけ整理を促す
-5. `### 昨日からの完了` — `completed_today_tasks` を列挙。なければ「なし」
+5. `### 今日の完了` — `completed_today_tasks` を列挙。なければ「なし」
 6. `### まずやること` — 重要度と期限から、今すぐ着手する候補を最大3件
 
 タスクのタイトル・期限・メモを勝手に変更せず、完了や削除などの書き込みはユーザーが明示的に依頼した場合だけ行う。
