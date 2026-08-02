@@ -27,7 +27,7 @@
 ## 設計
 
 設計の詳細は [docs/DESIGN.md](docs/DESIGN.md) を参照．
-まずは Phase 1 (タスク管理 MVP) から開発する．
+Phase 1 (タスク管理 MVP) は開発済み．次は Phase 4 (MCP サーバー + Claude スキルによる秘書のAI化) を進める．
 
 ## ローカル開発とデプロイ
 

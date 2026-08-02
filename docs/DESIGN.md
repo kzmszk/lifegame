@@ -17,9 +17,11 @@
 | 1 (MVP) | タスク管理: CRUD + 今日ビュー + 音声入力(音声→タスク化、ルールベースの日付解析) |
 | 2 | 健康・運動ログ: 体重・運動などの日次記録とグラフ、繰り返しタスク・習慣トラッキング |
 | 3 | 情報収集支援: RSS・ブックマークの収集と閲覧 |
-| 4 | 秘書のAI化: 自然言語でのタスク操作、朝のブリーフィング生成(Workers AI → 必要ならClaude API) |
+| 4 | 秘書のAI化: MCP サーバーを公開し、Claude 等のAIアシスタントからタスクを読み書き(追加含む)。朝のブリーフィングは Claude 側のスキルで生成 |
 
-AI(LLM)は Phase 4 まで導入しない。まず手動+音声入力で確実に動くものを作る。
+自前の LLM 呼び出し(Workers AI / Claude API)は導入しない。AI 機能(自然言語の解釈・要約・対話)は
+MCP で接続した Claude 等のアシスタントに任せ、サーバーはデータの記録と提供に徹する(セクション10)。
+Phase 1 完了後は Phase 4 を先に進め、Phase 2・3 は後回しにする。
 
 ## 3. 技術スタック
 
@@ -38,7 +40,8 @@ AI(LLM)は Phase 4 まで導入しない。まず手動+音声入力で確実に
 
 React + Vite の SPA を1本作り、Worker から静的アセットとして配信する。
 
-- 選定理由: 先のフェーズほどUIがインタラクティブになる(Phase 2 グラフ、Phase 4 チャットUI)。
+- 選定理由: 先のフェーズほどUIがインタラクティブになる(Phase 2 グラフ)。
+  チャットUIは作らない(Phase 4 では Claude アプリ自体がチャットUIになる)。
   自分専用アプリなので SSR の強み(SEO・JS無効対応)は活きない。
   毎日スマホのホーム画面から使うため、画面遷移のないアプリらしい操作感を優先する
 - 乗り換え保険: UI と API (`/api/*`)・D1・パーサーを分離しておくことで、
@@ -171,18 +174,83 @@ SPA が利用する JSON API。
 4. 確認UIに `TaskDraft` を表示し、誤認識はその場で修正 → 確定操作で `POST /api/tasks` に送信して保存する
 
 日付パーサーはタイムゾーン(Asia/Tokyo)を固定して判定する。
-Phase 4 でこのパーサーを LLM に差し替え可能なよう、`parse(text) → TaskDraft` のインターフェースに閉じ込める。
+このパーサーは Phase 4 以降も SPA のクイック追加用としてそのまま残す。自然言語での柔軟な操作は
+MCP 経由の Claude が担うため、パーサーの LLM 差し替えは行わない(セクション10)。
 
 ## 9. 認証・セキュリティ
 
 - Cloudflare Access で Worker への全リクエストを保護し、自分のアカウントのみ許可する
 - アプリ側では認証コードを書かない(Access が JWT を検証済みの前提)
 - 念のため `Cf-Access-Authenticated-User-Email` ヘッダを検証するミドルウェアを1枚入れる
+- 例外: Phase 4 の `/mcp` だけは Access の保護対象から外し、MCP 標準の OAuth で保護する(セクション10)
 
-## 10. 開発の進め方 (Phase 1 のタスク分解)
+## 10. Phase 4: MCP 連携の設計
+
+方針: **サーバーはデータの記録と提供に徹し、解釈・要約・対話は Claude 側に任せる**。
+Worker に MCP サーバー(`/mcp`)を追加し、Claude アプリ・Claude Code 等からタスクを読み書きできるようにする。
+チャットUI・自前の LLM 呼び出し・cron によるブリーフィング生成は作らない。
+
+```
+[Claude アプリ / Claude Code / (ChatGPT)]
+   │  MCP (Streamable HTTP + OAuth)
+   ▼
+[Worker: /mcp]  ← 既存の db/tasks.ts・lib/time.ts をツール実装として再利用
+   ▼
+[D1 (SQLite)]
+```
+
+### MCP ツール (read/write 両対応)
+
+| ツール | 種別 | 役割 |
+|--------|------|------|
+| `get_daily_summary` | read | 今日のタスク・期限切れ・Inbox 件数・今日完了分を1回の呼び出しで返す集約ビュー(ブリーフィング用) |
+| `list_tasks` | read | `view=today\|inbox\|all` 相当の一覧取得 |
+| `create_task` | write | タスク追加。Claude が日本語を解釈し、構造化済み(`title, due_date, due_time, priority, tags`)で渡す |
+| `update_task` | write | 更新(延期・タイトル変更・完了/未完了トグル) |
+| `delete_task` | write | 削除 |
+
+- JST の「今日」判定は Phase 1 と同様にサーバー側(`lib/time.ts`)で行い、Claude に日付境界を考えさせない
+- `completed_at` と `status` の連動契約(セクション7)は MCP 経由の更新にもそのまま適用する
+- write は1ツール1操作に分割し、クライアント側の承認カード(呼び出しごとの確認)を前提に設計する
+
+### 認証
+
+- `/mcp` は Cloudflare Access の保護対象から外し、MCP 標準の OAuth(Dynamic Client Registration)で保護する。
+  実装は Cloudflare の `workers-oauth-provider` + agents SDK(`McpAgent`)を利用する
+- 無認証での公開はしない(タスク内容は個人情報そのもの)
+
+### 朝のブリーフィング
+
+- cron・briefings テーブル・LLM API 呼び出しは作らない
+- 解釈ロジックは Claude 側のスキルに置く: `skills/morning-briefing/SKILL.md` をリポジトリで管理し、
+  claude.ai に登録する。内容は「`get_daily_summary` を呼び、この構成・トーンで要約する」という指示書
+- 朝は Claude アプリに「今日のブリーフィングして」と話しかける。自動化したくなったら
+  claude.ai のスケジュールタスク(定期実行プロンプト+コネクタ)を検討する
+- Phase 2・3 でデータが増えたら、集約ツールとスキルを拡張するだけでブリーフィングに反映できる
+
+### ChatGPT からの接続(オプション)
+
+- 同じ MCP サーバーに ChatGPT のカスタムコネクタ(Developer mode)からも接続できる
+- ただし Plus/Pro プランで write ツールを呼べるかは公式ドキュメントの記述が割れているため、
+  接続テストで確認する(read はどのプランでも可)。不可なら ChatGPT は読み取り専用として使う
+- ChatGPT の音声会話モードはツール呼び出し非対応。音声で使う場合はディクテーション
+  (マイク入力→テキストチャット)を使う
+
+## 11. 開発の進め方
+
+### Phase 1 のタスク分解 (完了)
 
 1. プロジェクト雛形: Hono + wrangler + D1 + React (Vite) のセットアップ、ローカル開発環境
 2. マイグレーションと DB アクセス層、JSON API (`/api/*`)
 3. React SPA: 今日 / Inbox / 一覧 / 詳細 の4画面、完了トグル(楽観的更新)、クイック追加
 4. 音声入力 + 日付パーサー
 5. PWA 化 (manifest, アイコン) と Cloudflare Access 設定、本番デプロイ
+
+### Phase 4 のタスク分解
+
+1. 最小 MCP サーバー: read 1個 + write 1個だけ実装し、Claude アプリ / ChatGPT から接続確認
+   (ChatGPT Plus での write 可否はここで白黒つける)
+2. OAuth 導入(`workers-oauth-provider`)と Cloudflare Access の `/mcp` 除外設定
+3. ツール一式の実装(`get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task`)
+4. ブリーフィング用スキル作成(`skills/morning-briefing/`)と実運用テスト
+5. claude.ai スケジュールタスクによる自動ブリーフィングの検討
