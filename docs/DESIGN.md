@@ -26,29 +26,24 @@ AI(LLM)は Phase 4 まで導入しない。まず手動+音声入力で確実に
 | 層 | 採用技術 | 備考 |
 |----|---------|------|
 | ランタイム | Cloudflare Workers | 無料枠 10万リクエスト/日で個人利用には十分 |
-| バックエンド | Hono | 1つのWorkerでAPI・ページ・静的アセットを全部配信 |
-| フロントエンド | 2タイプを並行試作(下記) | UI層だけ2種類作り、使い比べて片方に絞る |
+| バックエンド | Hono | 1つのWorkerでAPIと静的アセットを配信 |
+| フロントエンド | React + Vite (SPA) | Workerから静的配信。API分離構造なのでUI層はいつでも乗り換え可能 |
 | 言語 | TypeScript | |
 | DB | Cloudflare D1 (SQLite) | 無料枠 5GB |
 | 音声入力 | Web Speech API (ブラウザ標準) | 追加インフラ不要・無料。iOS Safari / Android Chrome 対応 |
 | 認証 | Cloudflare Access (Zero Trust) | アプリコード側は認証を書かない。自分のGoogleアカウントのみ許可 |
 | デプロイ | wrangler | `wrangler deploy` のみ。CIは後で GitHub Actions 化 |
 
-### フロントエンドの方針: 2タイプ並行試作
+### フロントエンドの方針: React SPA 一本
 
-リッチなUIが欲しくなる可能性があるため、**UI層だけ2タイプ作って使い比べる**。
-D1・API・日付パーサーはすべて共有し、二重になるのはビューだけに抑える。
+React + Vite の SPA を1本作り、Worker から静的アセットとして配信する。
 
-| | Type A: SSR版 | Type B: SPA版 |
-|--|--------------|---------------|
-| 技術 | Hono JSX (サーバーレンダリング) | React + Vite |
-| パス | `/` 配下 | `/app` 配下 |
-| 特徴 | 軽量・シンプル。form POSTベースで確実に動く | リッチなUI・画面遷移なしの操作感。アニメーションや楽観的更新がやりやすい |
-| 音声入力 | 小さなクライアントJSで対応 | Reactコンポーネントとして対応 |
-
-- 両タイプとも同じ `/api/*` (JSON API) を叩く。機能差はつけない
-- MVP(今日ビュー+クイック追加+完了トグル)を両方で作り、スマホで1〜2週間使い比べる
-- **Phase 2 に進む前にどちらかに絞り、負けた方は削除する**(併存させ続けない)
+- 選定理由: 先のフェーズほどUIがインタラクティブになる(Phase 2 グラフ、Phase 4 チャットUI)。
+  自分専用アプリなので SSR の強み(SEO・JS無効対応)は活きない。
+  毎日スマホのホーム画面から使うため、画面遷移のないアプリらしい操作感を優先する
+- 乗り換え保険: UI と API (`/api/*`)・D1・パーサーを分離しておくことで、
+  万一UI技術を変えたくなってもビュー層だけ捨てれば済む構造を維持する
+- 完了トグルは楽観的更新(タップで即時反映→裏でAPI)、追加も画面遷移なし
 - PWA: `manifest.json` を配信してホーム画面に追加可能にする。オフライン対応(Service Worker)は Phase 2 以降
 
 ## 4. アーキテクチャ
@@ -60,10 +55,9 @@ D1・API・日付パーサーはすべて共有し、二重になるのはビュ
 [Cloudflare Access]  ← 自分のアカウントだけ通す
    ▼
 [Worker: Hono アプリ]
-   ├─ /api/*   JSON API(両UIで共有)
-   ├─ /        Type A: SSR版 UI (Hono JSX)
-   ├─ /app/*   Type B: SPA版 UI (React, ビルド済み静的アセット)
-   └─ 静的アセット (manifest.json, client.js, icon)
+   ├─ /api/*   JSON API
+   └─ /        React SPA (ビルド済み静的アセット, SPAフォールバック)
+                + manifest.json, icons
    ▼
 [D1 (SQLite)]
 ```
@@ -71,28 +65,26 @@ D1・API・日付パーサーはすべて共有し、二重になるのはビュ
 ### ディレクトリ構成(予定)
 
 ```
-src/                 # Worker 本体
-  index.tsx          # Hono アプリのエントリ
+src/                 # Worker 本体 (API専用)
+  index.ts           # Hono アプリのエントリ
   routes/
-    api.ts           # /api/* (両UI共有の JSON API)
-    pages.tsx        # Type A のページルート
-  views/             # Type A の JSX コンポーネント
+    api.ts           # /api/* (JSON API)
   db/                # D1 アクセス(クエリ関数)
   lib/
     parse.ts         # 音声テキストの日付・時刻パーサー
   shared/
-    types.ts         # Task 型など、Worker と SPA で共有する型
-web/                 # Type B: React SPA (Vite プロジェクト)
+    types.ts         # Task 型・APIリクエスト/レスポンス型 (Worker と SPA で共有)
+web/                 # React SPA (Vite プロジェクト)
   src/
-  vite.config.ts     # ビルド出力を public/app/ へ
-public/              # 静的アセット (client.js, manifest.json, icons, app/)
+  vite.config.ts     # ビルド出力を public/ へ
+public/              # 配信アセット (SPAビルド成果物, manifest.json, icons)
 migrations/          # D1 マイグレーション SQL
 wrangler.jsonc
 ```
 
-- `/api/*` と Type A のページは Worker が処理し、`/app` 配下は静的アセットとして配信する
-  (wrangler の assets 設定で `run_worker_first: ["/api/*", "/", "/inbox", ...]` を指定)
-- API のリクエスト/レスポンス型は `src/shared/types.ts` に置き、両UIから import して型を揃える
+- wrangler の assets 設定で `run_worker_first: ["/api/*"]` とし、それ以外は静的配信。
+  `not_found_handling: "single-page-application"` で SPA のルーティングにフォールバックさせる
+- API のリクエスト/レスポンス型は `src/shared/types.ts` に置き、SPA からも import して型を揃える
 
 ## 5. データモデル (Phase 1)
 
@@ -136,15 +128,18 @@ CREATE TABLE logs (
 | `/all` | 一覧 | 全タスク(完了含む、新しい順) |
 | `/tasks/:id` | 詳細/編集 | タイトル・メモ・期限・優先度・タグの編集、削除 |
 
+- パスは SPA のクライアントサイドルーティング
 - モバイルファーストのシンプルな1カラムUI。下部タブで 今日 / Inbox / 一覧 を切替
-- 完了チェックはチェックボックス(JS有効ならfetchで即時反映、無効ならform POST)
+- 完了チェックはタップで即時反映(楽観的更新)し、裏で API を呼ぶ。失敗時は元に戻してトースト表示
 
 ## 7. API (Phase 1)
 
-ページ用の form POST とは別に、クライアントJS用の JSON API を用意する。
+SPA が利用する JSON API。
 
 | メソッド/パス | 役割 |
 |---------------|------|
+| `GET /api/tasks?view=today\|inbox\|all` | タスク一覧の取得 |
+| `GET /api/tasks/:id` | タスク1件の取得 |
 | `POST /api/tasks` | タスク作成。`{ text }` を受け取りパーサーで期限抽出、または構造化済み `{ title, due_date, ... }` |
 | `PATCH /api/tasks/:id` | 更新(完了トグル含む) |
 | `DELETE /api/tasks/:id` | 削除 |
@@ -170,10 +165,8 @@ Phase 4 でこのパーサーを LLM に差し替え可能なよう、`parse(tex
 
 ## 10. 開発の進め方 (Phase 1 のタスク分解)
 
-1. プロジェクト雛形: Hono + wrangler + D1 セットアップ、ローカル開発 (`wrangler dev`)
-2. マイグレーションと DB アクセス層、共有 JSON API (`/api/*`)
-3. Type A (SSR版): 今日 / Inbox / 一覧 / 詳細 + クライアントJS(完了トグル、クイック追加)
-4. Type B (SPA版): React + Vite で同じ4画面を実装、`/app` 配下に配信
-5. 音声入力 + 日付パーサー(両UIに組み込み)
-6. PWA 化 (manifest, アイコン) と Cloudflare Access 設定、本番デプロイ
-7. 1〜2週間使い比べて Type A / B のどちらかに決定、負けた方を削除して Phase 2 へ
+1. プロジェクト雛形: Hono + wrangler + D1 + React (Vite) のセットアップ、ローカル開発環境
+2. マイグレーションと DB アクセス層、JSON API (`/api/*`)
+3. React SPA: 今日 / Inbox / 一覧 / 詳細 の4画面、完了トグル(楽観的更新)、クイック追加
+4. 音声入力 + 日付パーサー
+5. PWA 化 (manifest, アイコン) と Cloudflare Access 設定、本番デプロイ
