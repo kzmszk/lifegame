@@ -21,12 +21,56 @@ describe('MCP tool registration', () => {
     expect(registeredTools.get_daily_summary.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(registeredTools.list_tasks.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     expect(registeredTools.create_task.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
-    expect(registeredTools.update_task.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(registeredTools.update_task.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(registeredTools.delete_task.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect((registeredTools.create_task.inputSchema as z.ZodType).safeParse({ title: '' }).success).toBe(false);
 
     const result = await registeredTools.create_task.handler({ title: '書き込み' });
     expect(result).toMatchObject({ isError: true });
     expect((result as { content: Array<{ text: string }> }).content[0].text).toContain('tasks:write');
+  });
+
+  it('returns only update metadata without tasks:read and the full task with both scopes', async () => {
+    const storedTask = {
+      id: 7,
+      title: '秘密のタイトル',
+      note: '秘密のメモ',
+      status: 'open' as const,
+      due_date: '2026-08-03',
+      due_time: '09:30',
+      priority: 0,
+      tags: '秘密',
+      created_at: '2026-08-01 00:00:00',
+      updated_at: '2026-08-01 00:00:00',
+      completed_at: null,
+    };
+    const db = {
+      prepare: () => ({
+        bind: () => ({
+          run: async () => ({ success: true, meta: { changes: 1 } }),
+          first: async () => storedTask,
+        }),
+      }),
+    } as unknown as D1Database;
+    let props = { email: 'owner@example.com', scopes: ['tasks:write'] };
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    registerLifegameTools(server, db, () => props);
+    const registeredTools = (server as unknown as {
+      _registeredTools: Record<string, { handler: (input: unknown) => Promise<unknown> }>;
+    })._registeredTools;
+
+    const writeOnlyResult = await registeredTools.update_task.handler({ id: 7, priority: 0 });
+    const writeOnlyPayload = JSON.parse((writeOnlyResult as { content: Array<{ text: string }> }).content[0].text) as Record<string, unknown>;
+    expect(writeOnlyPayload).toEqual({ updated: true, id: 7, fields: ['priority'] });
+    expect(JSON.stringify(writeOnlyPayload)).not.toContain('秘密のタイトル');
+    expect(JSON.stringify(writeOnlyPayload)).not.toContain('秘密のメモ');
+    expect(JSON.stringify(writeOnlyPayload)).not.toContain('秘密');
+
+    props = { email: 'owner@example.com', scopes: ['tasks:read', 'tasks:write'] };
+    const fullResult = await registeredTools.update_task.handler({ id: 7, priority: 0 });
+    const fullPayload = JSON.parse((fullResult as { content: Array<{ text: string }> }).content[0].text) as {
+      task: typeof storedTask;
+    };
+    expect(fullPayload.task).toEqual(storedTask);
   });
 });

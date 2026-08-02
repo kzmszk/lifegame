@@ -8,6 +8,9 @@ type SupportedScope = (typeof SUPPORTED_SCOPES)[number];
 
 const CONSENT_CSRF_COOKIE = '__Host-lifegame-consent-csrf';
 const CONSENT_CSRF_MAX_AGE = 600;
+const CONSENT_CSRF_MAX_TOKENS = 5;
+const CONSENT_CSRF_MAX_COOKIE_LENGTH = 512;
+const CONSENT_CSRF_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface OAuthValidationError {
   error: 'invalid_request' | 'invalid_scope' | 'unauthorized_client' | 'unsupported_response_type';
@@ -37,6 +40,26 @@ function clearConsentCsrfCookie(response: Response): Response {
     `${CONSENT_CSRF_COOKIE}=; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
   );
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function setConsentCsrfCookie(response: Response, tokens: string[]): Response {
+  if (tokens.length === 0) return clearConsentCsrfCookie(response);
+  const headers = new Headers(response.headers);
+  headers.append('Set-Cookie', serializeConsentCsrfCookie(tokens));
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function parseConsentCsrfTokens(value: string | null): string[] {
+  if (!value || value.length > CONSENT_CSRF_MAX_COOKIE_LENGTH) return [];
+  const tokens = value.split('.');
+  if (tokens.length > CONSENT_CSRF_MAX_TOKENS || tokens.some((token) => !CONSENT_CSRF_TOKEN_PATTERN.test(token))) {
+    return [];
+  }
+  return [...new Set(tokens)];
+}
+
+function serializeConsentCsrfCookie(tokens: string[]): string {
+  return `${CONSENT_CSRF_COOKIE}=${tokens.join('.')}; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=${CONSENT_CSRF_MAX_AGE}`;
 }
 
 function getCookie(request: Request, name: string): string | null {
@@ -156,6 +179,9 @@ function consentPage(request: Request, oauthRequest: AuthRequest, client: Client
   const action = new URL(request.url);
   action.pathname = '/authorize';
   const csrfToken = crypto.randomUUID();
+  const csrfTokens = [...parseConsentCsrfTokens(getCookie(request, CONSENT_CSRF_COOKIE)), csrfToken].slice(
+    -CONSENT_CSRF_MAX_TOKENS,
+  );
   const requestedScopes =
     oauthRequest.scope.length > 0
       ? oauthRequest.scope.join(', ')
@@ -186,7 +212,7 @@ function consentPage(request: Request, oauthRequest: AuthRequest, client: Client
       'Cache-Control': 'no-store',
       'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
       'X-Frame-Options': 'DENY',
-      'Set-Cookie': `${CONSENT_CSRF_COOKIE}=${csrfToken}; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=${CONSENT_CSRF_MAX_AGE}`,
+      'Set-Cookie': serializeConsentCsrfCookie(csrfTokens),
     },
   });
 }
@@ -251,14 +277,15 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
   } catch {
     return clearConsentCsrfCookie(invalidRequestResponse());
   }
-  const cookieToken = getCookie(request, CONSENT_CSRF_COOKIE);
-  if (!csrfToken || !cookieToken || csrfToken !== cookieToken) {
+  const cookieTokens = parseConsentCsrfTokens(getCookie(request, CONSENT_CSRF_COOKIE));
+  if (!csrfToken || !cookieTokens.includes(csrfToken)) {
     return clearConsentCsrfCookie(new Response('Invalid consent form', { status: 400 }));
   }
   if (decision !== 'approve' && decision !== 'deny') {
     return clearConsentCsrfCookie(invalidRequestResponse());
   }
-  if (decision === 'deny') return clearConsentCsrfCookie(oauthErrorRedirect(oauthRequest, 'access_denied'));
+  const remainingTokens = cookieTokens.filter((token) => token !== csrfToken);
+  if (decision === 'deny') return setConsentCsrfCookie(oauthErrorRedirect(oauthRequest, 'access_denied'), remainingTokens);
 
   const grantedScopes = grantedScopesForRequest(oauthRequest.scope);
   const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
@@ -268,7 +295,7 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
     scope: grantedScopes,
     props: { email: accessUser.email, scopes: grantedScopes },
   });
-  return clearConsentCsrfCookie(Response.redirect(redirectTo, 302));
+  return setConsentCsrfCookie(Response.redirect(redirectTo, 302), remainingTokens);
 }
 
 export const defaultHandler: ExportedHandler<Env> = {

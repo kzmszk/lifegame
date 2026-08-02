@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { McpAuthProps } from './auth';
-import { assertMcpScope } from './auth';
+import { assertMcpScope, hasMcpScope } from './auth';
 import {
   createTaskForMcp,
   deleteTaskForMcp,
@@ -100,6 +100,7 @@ export function registerLifegameTools(
     async (input) => {
       try {
         assertMcpScope(getProps(), 'tasks:write');
+        // The returned task content comes from the caller, unlike update_task's stored row.
         return jsonToolResult({ task: await createTaskForMcp(db, input) });
       } catch (error) {
         return errorToolResult(error);
@@ -112,12 +113,22 @@ export function registerLifegameTools(
     {
       description: 'タスクを1件だけ部分更新します。statusをdone/openにするとcompleted_atも同じ更新で設定/クリアされます。',
       inputSchema: updateTaskSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true },
     },
     async ({ id, ...fields }) => {
       try {
-        assertMcpScope(getProps(), 'tasks:write');
-        return jsonToolResult({ task: await updateTaskForMcp(db, id, fields) });
+        const props = getProps();
+        assertMcpScope(props, 'tasks:write');
+        const task = await updateTaskForMcp(db, id, fields);
+        if (hasMcpScope(props, 'tasks:read')) return jsonToolResult({ task });
+
+        return jsonToolResult({
+          updated: true,
+          id,
+          fields: Object.entries(fields)
+            .filter(([, value]) => value !== undefined)
+            .map(([field]) => field),
+        });
       } catch (error) {
         return errorToolResult(error);
       }

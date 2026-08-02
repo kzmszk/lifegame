@@ -1,10 +1,12 @@
 import type { AuthRequest, ClientInfo } from '@cloudflare/workers-oauth-provider';
 import { describe, expect, it } from 'vitest';
 import {
+  defaultHandler,
   grantedScopesForRequest,
   validateAuthorizationRequest,
 } from './oauth';
 import { validateClientRegistrationMetadata } from './lib/oauth-policy';
+import type { Env } from './env';
 
 const client = (overrides: Partial<ClientInfo> = {}): ClientInfo => ({
   clientId: 'client-1',
@@ -64,5 +66,103 @@ describe('DCR metadata policy', () => {
       'invalid_client_metadata',
     );
     expect(validateClientRegistrationMetadata({ client_name: 'Claude', redirect_uris: ['https://client.example'] })).toBeUndefined();
+  });
+});
+
+describe('OAuth consent CSRF protection', () => {
+  it('keeps two consent tokens valid independently and rejects unknown or absent tokens', async () => {
+    let completedAuthorizations = 0;
+    const env = {
+      AUTH_REQUIRED: 'false',
+      OAUTH_PROVIDER: {
+        lookupClient: async () => client(),
+        parseAuthRequest: async () => authorizationRequest(),
+        completeAuthorization: async () => {
+          completedAuthorizations += 1;
+          return { redirectTo: 'https://client.example/callback?code=code-1' };
+        },
+      },
+    } as unknown as Env;
+    const request = new Request('https://lifegame.example/authorize');
+    const fetchAuthorize = (authorizationRequest: Request) =>
+      defaultHandler.fetch!(
+        authorizationRequest as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
+        env,
+        {} as ExecutionContext,
+      );
+
+    const firstPage = await fetchAuthorize(request);
+    const firstToken = (await firstPage.text()).match(/name="csrf_token" value="([^"]+)"/)?.[1];
+    const firstCookie = firstPage.headers.get('Set-Cookie');
+    expect(firstToken).toBeTruthy();
+    expect(firstCookie).toContain('__Host-lifegame-consent-csrf=');
+    expect(firstCookie).toContain('Secure');
+    expect(firstCookie).toContain('HttpOnly');
+    expect(firstCookie).toContain('SameSite=Lax');
+    expect(firstCookie).toContain('Path=/');
+
+    const secondPage = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        headers: { Cookie: firstCookie?.split(';')[0] ?? '' },
+      }),
+    );
+    const secondToken = (await secondPage.text()).match(/name="csrf_token" value="([^"]+)"/)?.[1];
+    const secondCookie = secondPage.headers.get('Set-Cookie')?.split(';')[0];
+    expect(secondToken).toBeTruthy();
+    expect(secondToken).not.toBe(firstToken);
+    expect(secondCookie).toContain(firstToken);
+    expect(secondCookie).toContain(secondToken);
+
+    const firstPost = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        method: 'POST',
+        headers: {
+          Cookie: secondCookie ?? '',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `decision=approve&csrf_token=${encodeURIComponent(firstToken ?? '')}`,
+      }),
+    );
+    expect(firstPost.status).toBe(302);
+    const remainingCookie = firstPost.headers.get('Set-Cookie')?.split(';')[0];
+    expect(remainingCookie).toContain(secondToken);
+    expect(remainingCookie).not.toContain(firstToken);
+
+    const secondPost = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        method: 'POST',
+        headers: {
+          Cookie: remainingCookie ?? '',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `decision=approve&csrf_token=${encodeURIComponent(secondToken ?? '')}`,
+      }),
+    );
+    expect(secondPost.status).toBe(302);
+    expect(secondPost.headers.get('Set-Cookie')).toContain('Max-Age=0');
+    expect(completedAuthorizations).toBe(2);
+
+    const unknownTokenPost = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        method: 'POST',
+        headers: {
+          Cookie: secondCookie ?? '',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'decision=approve&csrf_token=00000000-0000-4000-8000-000000000000',
+      }),
+    );
+    expect(unknownTokenPost.status).toBe(400);
+    await expect(unknownTokenPost.text()).resolves.toBe('Invalid consent form');
+
+    const absentTokenPost = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'decision=approve',
+      }),
+    );
+    expect(absentTokenPost.status).toBe(400);
+    await expect(absentTokenPost.text()).resolves.toBe('Invalid consent form');
   });
 });
