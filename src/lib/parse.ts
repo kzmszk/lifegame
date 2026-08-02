@@ -108,7 +108,8 @@ export function parse(text: string, now: Date = new Date()): TaskDraft {
       dueDate = addDays(today, offset);
       remaining = remaining.replace(new RegExp(`${relativeMatch[0]}(?:の)?`), '');
     } else {
-      const monthDayMatch = remaining.match(/(\d{1,2})月\s*(\d{1,2})日?/);
+      // Require the 日 suffix so quantity text such as "8月10件" is not read as a date.
+      const monthDayMatch = remaining.match(/(\d{1,2})月\s*(\d{1,2})日/);
       if (monthDayMatch) {
         const parsedDate = dateFromMonthDay(today, Number(monthDayMatch[1]), Number(monthDayMatch[2]));
         if (parsedDate) {

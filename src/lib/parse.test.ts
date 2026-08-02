@@ -58,4 +58,11 @@ describe('parse', () => {
       due_date: null,
     });
   });
+
+  it('does not read quantity text like 8月10件 as a month/day date', () => {
+    expect(parse('8月10件の面談を設定', now)).toMatchObject({
+      title: '8月10件の面談を設定',
+      due_date: null,
+    });
+  });
 });

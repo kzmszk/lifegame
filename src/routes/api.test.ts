@@ -45,4 +45,14 @@ describe('API safety boundaries', () => {
     expect(unsupported.headers.get('content-type')).toContain('application/json');
     expect(parseUnsupported.status).toBe(405);
   });
+
+  it('returns 405 with Allow: POST for PATCH/DELETE on the parse endpoint', async () => {
+    for (const method of ['PATCH', 'DELETE']) {
+      const response = await app.request('/api/tasks/parse', { method }, env());
+
+      expect(response.status).toBe(405);
+      expect(response.headers.get('allow')).toBe('POST');
+      expect(response.headers.get('content-type')).toContain('application/json');
+    }
+  });
 });

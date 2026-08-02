@@ -192,6 +192,10 @@ api.post('/tasks', async (c) => {
 });
 
 api.patch('/tasks/:id', async (c) => {
+  if (relativeApiPath(c.req.path) === '/tasks/parse') {
+    c.header('Allow', 'POST');
+    return error(c, 'このAPIメソッドは対応していません', 405);
+  }
   const id = parseId(c.req.param('id'));
   if (!id) return error(c, 'タスクIDが不正です', 400);
   const body = await readBody(c);
@@ -203,6 +207,10 @@ api.patch('/tasks/:id', async (c) => {
 });
 
 api.delete('/tasks/:id', async (c) => {
+  if (relativeApiPath(c.req.path) === '/tasks/parse') {
+    c.header('Allow', 'POST');
+    return error(c, 'このAPIメソッドは対応していません', 405);
+  }
   const id = parseId(c.req.param('id'));
   if (!id) return error(c, 'タスクIDが不正です', 400);
   const deleted = await deleteTask(c.env.DB, id);
