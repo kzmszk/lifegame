@@ -258,10 +258,11 @@ Worker に MCP サーバー(`/mcp`)を追加し、Claude アプリ・Claude Code
 
 ### Phase 4 のタスク分解
 
-1. 最小 MCP サーバー: read 1個 + write 1個だけ実装し、Claude アプリ / ChatGPT から接続確認
-   (`run_worker_first` への `/mcp` 追加を含む。ChatGPT Plus での write 可否はここで白黒つける)
-2. OAuth 導入(`workers-oauth-provider`)、OAuth 系パスの `run_worker_first` 追加と
-   Cloudflare Access の除外設定(`/authorize` は Access 配下に残す)
-3. ツール一式の実装(`get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task`)
-4. ブリーフィング用スキル作成(`skills/morning-briefing/`)と実運用テスト
-5. claude.ai スケジュールタスクによる自動ブリーフィングの検討
+1. 最小 MCP サーバー + OAuth: Cloudflare の remote MCP テンプレート(`workers-oauth-provider` + `McpAgent`)を
+   ベースに read 1個 + write 1個だけ実装し、`run_worker_first` への `/mcp`・OAuth 系パス追加と
+   Access の除外設定(`/authorize` は Access 配下に残す)まで済ませてから、
+   Claude アプリ / ChatGPT で接続確認(ChatGPT Plus での write 可否はここで白黒つける)。
+   Access 除外より前に OAuth を入れることで、無認証で公開される期間を作らない
+2. ツール一式の実装(`get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task`)
+3. ブリーフィング用スキル作成(`skills/morning-briefing/`)と実運用テスト
+4. claude.ai スケジュールタスクによる自動ブリーフィングの検討
