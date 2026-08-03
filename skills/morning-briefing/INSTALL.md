@@ -37,8 +37,12 @@ mkdir -p .claude/skills && cp -r skills/morning-briefing .claude/skills/
 スキルの形式は Claude と同じ。置き場所が `~/.codex/skills/` になるだけ。
 
 ```sh
-cp -r skills/morning-briefing ~/.codex/skills/
+mkdir -p ~/.codex/skills && cp -r skills/morning-briefing ~/.codex/skills/
 ```
+
+`mkdir -p` を省かないこと。`~/.codex/skills` が存在しない環境では、`cp -r` がそのパスを
+コピー先ディレクトリそのものとして作り、`~/.codex/skills/SKILL.md` に置かれてしまう
+(正しくは `~/.codex/skills/morning-briefing/SKILL.md`)。この状態だとスキルは認識されない。
 
 MCP サーバーの接続は Codex 側で別途行う(0.145.0 で確認):
 
