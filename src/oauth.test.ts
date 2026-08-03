@@ -471,12 +471,52 @@ describe('CSP violation report endpoint', () => {
     expect(warn).toHaveBeenCalledWith('CSP violation report:', expect.stringContaining('blocked-uri'));
   });
 
-  it('discards an oversized report without logging its body', async () => {
+  it('rejects an oversized report on its declared length, before touching the body', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const body = 'x'.repeat(9 * 1024);
+    const request = new Request(url, {
+      method: 'POST',
+      body,
+      headers: { 'content-length': String(body.length) },
+    });
+    const read = vi.spyOn(request, 'body', 'get');
+
+    const response = await fetchReport(request);
+
+    expect(response.status).toBe(204);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('discarded'));
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('discards an oversized report that declares no length', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
     const response = await fetchReport(new Request(url, { method: 'POST', body: 'x'.repeat(9 * 1024) }));
 
     expect(response.status).toBe(204);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('discarded'));
+  });
+
+  it('stops reading a streamed report once it exceeds the budget', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chunk = new Uint8Array(4 * 1024);
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(chunk);
+      },
+    });
+
+    const response = await fetchReport(
+      // No content-length: the budget has to be enforced while streaming.
+      new Request(url, { method: 'POST', body, duplex: 'half' } as RequestInit),
+    );
+
+    expect(response.status).toBe(204);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('discarded'));
+    // Cancelled early rather than draining an endless body.
+    expect(pulled).toBeLessThan(5);
   });
 
   it('rejects methods other than POST', async () => {

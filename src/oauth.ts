@@ -208,14 +208,45 @@ function consentCsp(redirectUri: string): string {
   ].join('; ');
 }
 
+// Returns null once the byte budget is exceeded. The stream is read in chunks and
+// cancelled rather than buffered, so an oversized POST to this unauthenticated
+// path cannot make the isolate materialize it first.
+async function readBoundedBody(request: Request, maxBytes: number): Promise<string | null> {
+  const declared = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
+  if (!request.body) return '';
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
 async function handleCspReport(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'POST' } });
   }
   // Browser telemetry from an unauthenticated path: log a bounded amount, store nothing.
-  const body = await request.text().catch(() => '');
-  if (body.length > MAX_CSP_REPORT_BYTES) {
-    console.warn(`CSP violation report discarded (${body.length} bytes)`);
+  const body = await readBoundedBody(request, MAX_CSP_REPORT_BYTES).catch(() => '');
+  if (body === null) {
+    console.warn(`CSP violation report discarded (over ${MAX_CSP_REPORT_BYTES} bytes)`);
   } else if (body) {
     console.warn('CSP violation report:', body);
   }
