@@ -188,10 +188,69 @@ function consentFormActionSource(redirectUri: string): string | null {
   }
 }
 
+// A CSP violation is invisible to both the user and the server unless it is
+// reported, which is how the form-action/redirect breakage stayed silent.
+export const CSP_REPORT_PATH = '/csp-report';
+const CSP_REPORT_ENDPOINT_NAME = 'csp-endpoint';
+const MAX_CSP_REPORT_BYTES = 8 * 1024;
+
 function consentCsp(redirectUri: string): string {
   const callbackSource = consentFormActionSource(redirectUri);
   const formAction = callbackSource ? `'self' ${callbackSource}` : "'self'";
-  return `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; frame-ancestors 'none'`;
+  return [
+    "default-src 'none'",
+    "style-src 'unsafe-inline'",
+    `form-action ${formAction}`,
+    "frame-ancestors 'none'",
+    // report-uri is deprecated but still the only form some browsers honour.
+    `report-uri ${CSP_REPORT_PATH}`,
+    `report-to ${CSP_REPORT_ENDPOINT_NAME}`,
+  ].join('; ');
+}
+
+// Returns null once the byte budget is exceeded. The stream is read in chunks and
+// cancelled rather than buffered, so an oversized POST to this unauthenticated
+// path cannot make the isolate materialize it first.
+async function readBoundedBody(request: Request, maxBytes: number): Promise<string | null> {
+  const declared = Number(request.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) return null;
+  if (!request.body) return '';
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
+async function handleCspReport(request: Request): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'POST' } });
+  }
+  // Browser telemetry from an unauthenticated path: log a bounded amount, store nothing.
+  const body = await readBoundedBody(request, MAX_CSP_REPORT_BYTES).catch(() => '');
+  if (body === null) {
+    console.warn(`CSP violation report discarded (over ${MAX_CSP_REPORT_BYTES} bytes)`);
+  } else if (body) {
+    console.warn('CSP violation report:', body);
+  }
+  return new Response(null, { status: 204 });
 }
 
 function consentPage(request: Request, oauthRequest: AuthRequest, client: ClientInfo): Response {
@@ -230,6 +289,7 @@ function consentPage(request: Request, oauthRequest: AuthRequest, client: Client
       'content-type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
       'Content-Security-Policy': csp,
+      'Reporting-Endpoints': `${CSP_REPORT_ENDPOINT_NAME}="${new URL(CSP_REPORT_PATH, request.url).toString()}"`,
       'X-Frame-Options': 'DENY',
       'Set-Cookie': serializeConsentCsrfCookie(consentCsrfCookieName(flowId)!, csrfToken),
     },
@@ -326,6 +386,7 @@ export const defaultHandler: ExportedHandler<Env> = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/authorize') return handleAuthorize(request, env);
+    if (url.pathname === CSP_REPORT_PATH) return handleCspReport(request);
     return app.fetch(request, env, ctx);
   },
 };
