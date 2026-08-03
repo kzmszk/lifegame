@@ -14,12 +14,14 @@ Claude アプリから `lifegame.tachicoma.com/mcp` に接続してタスクの�
 | OAuth (DCR, PKCE S256) | 稼働中。`workers-oauth-provider` が Worker のエントリポイント                      |
 | ツール5種              | `get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task` |
 | Cloudflare Access      | 設定済み。`/authorize` は保護、OAuthプロトコル用パスはBypass                       |
+| 接続の一覧と切断       | 稼働中。設定画面(ヘッダー右上の `●`)から `/api/connections`                        |
 | ブリーフィングスキル   | ファイルは `skills/morning-briefing/` にあるが **claude.ai に未登録**              |
 
-テストは 51 件。`npm test` / `npm run typecheck` / `npm run build` が通ることを常に確認してからデプロイする。
+テストは 65 件。デプロイ前は `npm run check`(format / lint / typecheck / test / build)を通す。
+CI も PR と main への push で同じものを回す。
 
-**リポジトリと本番は一致している**(main = PR #7 マージ後をデプロイ済み)。`/csp-report` は本番で 204 を返し、
-Access の Bypass も設定済み。
+**リポジトリと本番は一致している**(main = PR #12 マージ後をデプロイ済み、migration 0002 適用済み)。
+`/csp-report` は 204、`/api/connections` は未認証で 302 を返す。
 
 ## 2. 本番環境の構成
 
@@ -41,23 +43,14 @@ Access を通った自分だけ」という設計の要になっている。
 `skills/morning-briefing/` を ZIP 化して claude.ai にスキルとして登録する。
 登録後、朝に「今日のブリーフィングをして」と話しかけて実運用テストする。
 
-### 3.2 運用上の穴: 接続クライアントの失効手段
-
-現状、**接続中のOAuthクライアントを一覧・切断する手段がない**。ライブラリ側には
-`deleteClient()`(関連する権限付与とトークンを連鎖失効させる)があるが、それを呼ぶ入口が無い。
-繋ぎ先が増える前に、SPAの設定画面か管理用ルートを用意しておきたい。
-
-デバッグ中の失敗した試行でクライアント登録が溜まることがある。7日で自動的に期限切れになるが、
-状況は KV で確認できる(下記「調べ方」参照)。
-
-### 3.3 保険: Access JWT 検証
+### 3.2 保険: Access JWT 検証
 
 Worker は `Cf-Access-Authenticated-User-Email` ヘッダーを署名検証せずに信頼している。
 現構成では Access の外に出る入口が無いので実害は無いが、**将来ルートを足したり
 `workers.dev` を戻したときに、この前提が静かに崩れる**。`Cf-Access-Jwt-Assertion` の
 署名・issuer・audience を検証すれば、構成ミスに依存しなくなる。Cloudflare も検証を推奨している。
 
-### 3.4 テストの盲点: ブラウザE2E
+### 3.3 テストの盲点: ブラウザE2E
 
 CSPやcookie属性は「ブラウザへの指示」なので、サーバー側のテストでは効果を検証できない。
 `form-action` の不具合(後述)はこれで見逃した。現在 `SameSite=Lax` と `frame-ancestors 'none'` は
@@ -68,7 +61,7 @@ CSPやcookie属性は「ブラウザへの指示」なので、サーバー側�
 submit ボタンが1つも無かった)は、API が正常なのでサーバー側テストは全部通っていた。
 **UIの操作可能性はサーバーテストでは検出できない**。E2Eを入れるときはCSPと一緒に拾いたい。
 
-### 3.5 Phase 4 タスク4: 自動ブリーフィング
+### 3.4 Phase 4 タスク4: 自動ブリーフィング
 
 claude.ai のスケジュールタスクによる自動化。実運用の手応えを見てからで十分。
 
@@ -88,6 +81,31 @@ KV のキーの意味:
 - `client:*` — DCRで登録されたクライアント(7日TTL)
 - `grant:<email>:*` — 承認済みの権限付与
 - `token:*` — 発行済みアクセストークン(1時間)。リフレッシュトークンは既定30日
+
+切断の記録だけは KV ではなく **D1 の `revoked_grants`** にある。理由は「切断したのに使える」を
+調べるときに効いてくるので下に書く。
+
+```sh
+npx wrangler d1 execute lifegame --remote --command "SELECT * FROM revoked_grants"
+```
+
+### 接続の切断はどう効いているか
+
+ライブラリの `revokeGrant()` はトークンを消してから grant を消す。ところが refresh は
+**読んだ grant を書き戻す**ので、切断と競合すると grant が復活し、新しいトークンも残る。
+この書き込みはライブラリ内部で起きるため、こちら側で直列化できない。
+
+そこで多層で受け止めている。
+
+1. 切断時、`revoke` の**前**に `revoked_grants` へ記録する
+2. `tokenExchangeCallback` が refresh 時にそれを見て `invalid_grant` を投げる(発行させない)
+3. MCPツール5種が毎回それを見て拒否する(**生き残ったトークンでもタスクに触れない**)
+4. 一覧は記録済みの grant を除外する(復活したものを表示しない)
+
+記録が **KV ではなく D1** なのは、KV の書き込みが拠点間で結果整合のため。切断が成功を返した後も
+別拠点では最大1分ほど「記録なし」に見え、閉じたはずの窓がそこで開く。D1 は単一プライマリで
+読み取りレプリカも使っていないので、次のリクエストから見える。行に期限は持たせていない
+(期限付きだと、競合で発行されたトークンより先に切れる恐れがある)。
 
 外形確認は curl が速い。未認証だと `/` と `/api/*` は Access ログインへリダイレクトされ、
 `/mcp` は 401、`/.well-known/*` は 200 が正しい状態。
@@ -128,6 +146,8 @@ DCR により Claude 側が自動で登録する。設定に必要なのはURL�
 2. レビューも Codex(`--model gpt-5.6-sol --effort xhigh`)、指摘は Critical/Major/Minor すべて対応
 3. 数行で済む小さな修正は Claude が直接行う
 4. 変更は必ず PR にする。GitHub の Codex ボットが自動レビューするので、その指摘にも対応してからマージ
+5. コミット前に `npm run check`(format / lint / typecheck / test / build)。husky が staged 分を見る。
+   CI も PR と main への push で同じものを回す
 
 補足:
 
