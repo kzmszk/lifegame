@@ -3,13 +3,12 @@
   "name": "lifegame",
   "main": "src/index.ts",
   // workers.dev と Preview URL は Access の対象外になりうるため無効化している。
-  // そのぶん公開ホスト名は routes で明示する必要がある: 下の routes を自分のドメインに
-  // 置き換えてから deploy すること (未設定のままだと公開ホスト名のない Worker になる)。
+  // そのぶん公開ホスト名は routes で明示する必要がある。
   "workers_dev": false,
   "preview_urls": false,
   "routes": [
     {
-      "pattern": "lifegame.example.com",
+      "pattern": "lifegame.tachicoma.com",
       "custom_domain": true
     }
   ],
@@ -35,16 +34,14 @@
     {
       "binding": "DB",
       "database_name": "lifegame",
-      // Replace this local placeholder with the ID returned by `wrangler d1 create` before deploying.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "add71ef2-9c9c-44cb-acc6-5e24f987f741",
       "migrations_dir": "./migrations"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
-      // Replace this local placeholder with the ID returned by `wrangler kv namespace create OAUTH_KV` before deploying.
-      "id": "00000000000000000000000000000000"
+      "id": "54391d80a5ff4fe592f08c08d784cae1"
     }
   ],
   "durable_objects": {
