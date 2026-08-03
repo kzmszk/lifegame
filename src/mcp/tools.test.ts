@@ -150,7 +150,8 @@ class FakeStatement {
           continue;
         }
         const field = clause.match(/^([a-z_]+) = \?$/)?.[1] as
-          keyof Row | undefined;
+          | keyof Row
+          | undefined;
         if (field) task[field] = this.bindings[bindingIndex++] as never;
       }
       task.updated_at = '2026-08-03 01:00:00';

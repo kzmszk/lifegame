@@ -237,7 +237,7 @@ function isValidGrantId(grantId: string): boolean {
     grantId.length > 0 &&
     grantId.length <= MAX_GRANT_ID_LENGTH &&
     // Control characters are deliberately rejected at this trust boundary.
-    // eslint-disable-next-line no-control-regex
+    // oxlint-disable-next-line no-control-regex
     !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(grantId)
   );
 }

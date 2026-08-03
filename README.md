@@ -51,14 +51,14 @@ npx wrangler deploy
 ローカルでは次のコマンドを使う。`npm run check` は CI と同じチェックをまとめて実行する。
 
 ```sh
-npm run format       # Prettier で整形
-npm run lint         # ESLint
+npm run format       # Oxfmt で整形
+npm run lint         # Oxlint
 npm run typecheck    # TypeScript の型チェック
 npm test             # Vitest
 npm run check        # 上記のチェックと本番ビルドを一括実行
 ```
 
-`npm install` 後は Husky の pre-commit hook が有効になり、commit 対象を Prettier で整形する。JavaScript / TypeScript が含まれる場合だけ ESLint も実行し、その後にプロジェクト全体を型チェックする。いずれかが失敗した場合は commit を中止する。
+`npm install` 後は Husky の pre-commit hook が有効になり、commit 対象を Oxfmt で整形する。JavaScript / TypeScript が含まれる場合だけ Oxlint も実行し、その後にプロジェクト全体を型チェックする。いずれかが失敗した場合は commit を中止する。
 
 ## Phase 4: MCP と Claude
 

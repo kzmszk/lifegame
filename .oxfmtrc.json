@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "trailingComma": "all",
+  "printWidth": 80,
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    ".claude/",
+    "coverage/",
+    "dist/",
+    "node_modules/",
+    "public/",
+    ".wrangler/",
+    "package-lock.json"
+  ]
+}
