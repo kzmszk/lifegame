@@ -228,7 +228,7 @@ async function revokeConnection(c: Context<{ Bindings: Env }>) {
 
   // Written first: a refresh already in flight is refused at issuance time rather
   // than cleaned up afterwards, so it cannot resurrect the grant it just read.
-  await markGrantRevoked(c.env.OAUTH_KV, accessUser.email, grantId);
+  await markGrantRevoked(c.env.DB, accessUser.email, grantId);
 
   // The sweep still runs twice. The marker stops future issuance, but a token
   // written between the first pass's enumeration and its deletion of the grant

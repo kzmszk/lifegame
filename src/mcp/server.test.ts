@@ -3,16 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { registerLifegameTools } from './registration';
-import type { Env } from '../env';
 
-// No grant marker in these fixtures, so every lookup reports the grant still live.
-const liveKv = { get: async () => null, put: async () => undefined } as unknown as Env['OAUTH_KV'];
+// Revocation is looked up in D1 alongside the task queries, so the fakes below
+// answer both. `first()` returning null is what "this grant is still live" looks like.
+
+function liveDb() {
+  return {
+    prepare: () => ({ bind: () => ({ first: async () => null, run: async () => ({ success: true, meta: { changes: 0 } }) }) }),
+  } as unknown as D1Database;
+}
 
 describe('MCP tool registration', () => {
   it('publishes read/write/destructive annotations and returns tool errors for missing scopes', async () => {
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     const props = { email: 'owner@example.com', scopes: ['tasks:read'] };
-    registerLifegameTools(server, {} as D1Database, () => props, liveKv);
+    registerLifegameTools(server, liveDb(), () => props);
 
     const registeredTools = (server as unknown as {
       _registeredTools: Record<string, {
@@ -58,7 +63,7 @@ describe('MCP tool registration', () => {
     } as unknown as D1Database;
     let props = { email: 'owner@example.com', scopes: ['tasks:write'] };
     const server = new McpServer({ name: 'test', version: '1.0.0' });
-    registerLifegameTools(server, db, () => props, liveKv);
+    registerLifegameTools(server, db, () => props);
     const registeredTools = (server as unknown as {
       _registeredTools: Record<string, { handler: (input: unknown) => Promise<unknown> }>;
     })._registeredTools;
@@ -81,13 +86,19 @@ describe('MCP tool registration', () => {
   it('refuses every tool for a token whose grant was revoked', async () => {
     // Stands in for the token a refresh minted while racing a disconnect: the
     // provider still accepts it, so the tools are where it has to be stopped.
-    const revokedKv = {
-      get: async (key: string) => (key === 'revoked:owner@example.com:grant-1' ? '1' : null),
-      put: async () => undefined,
-    } as unknown as Env['OAUTH_KV'];
+    const revokedDb = {
+      prepare: (sql: string) => ({
+        bind: (userId: string, grantId: string) => ({
+          first: async () => (sql.includes('revoked_grants') && userId === 'owner@example.com' && grantId === 'grant-1'
+            ? { revoked: 1 }
+            : null),
+          run: async () => ({ success: true, meta: { changes: 1 } }),
+        }),
+      }),
+    } as unknown as D1Database;
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     const props = { email: 'owner@example.com', scopes: ['tasks:read', 'tasks:write'], grantId: 'grant-1' };
-    registerLifegameTools(server, {} as D1Database, () => props, revokedKv);
+    registerLifegameTools(server, revokedDb, () => props);
     const registeredTools = (server as unknown as {
       _registeredTools: Record<string, { handler: (input: unknown) => Promise<unknown> }>;
     })._registeredTools;

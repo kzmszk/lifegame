@@ -21,12 +21,12 @@ export function assertMcpScope(props: McpAuthProps | undefined, requiredScope: M
 // still cannot reach the tasks. Tokens issued before grantId was recorded carry no
 // id to check and expire within the hour.
 export async function assertGrantActive(
-  kv: Env['OAUTH_KV'],
+  db: Env['DB'],
   props: McpAuthProps | undefined,
 ): Promise<void> {
   const grantId = props?.grantId;
   if (typeof grantId !== 'string' || !props?.email) return;
-  if (await isGrantRevoked(kv, props.email, grantId)) {
+  if (await isGrantRevoked(db, props.email, grantId)) {
     throw new McpToolError('この接続は切断されています。再接続してください');
   }
 }

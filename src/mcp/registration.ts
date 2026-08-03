@@ -1,7 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { McpAuthProps, McpScope } from './auth';
-import type { Env } from '../env';
 import { assertGrantActive, assertMcpScope, hasMcpScope } from './auth';
 import {
   createTaskForMcp,
@@ -57,14 +56,13 @@ export function registerLifegameTools(
   server: McpServer,
   db: D1Database,
   getProps: () => McpAuthProps | undefined,
-  kv: Env['OAUTH_KV'],
 ): void {
   // Every tool goes through this: the scope check answers "may this token do it",
   // the revocation check answers "is this connection still supposed to exist".
   async function authorize(requiredScope: McpScope): Promise<McpAuthProps | undefined> {
     const props = getProps();
     assertMcpScope(props, requiredScope);
-    await assertGrantActive(kv, props);
+    await assertGrantActive(db, props);
     return props;
   }
 

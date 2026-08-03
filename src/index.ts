@@ -39,7 +39,7 @@ export default new OAuthProvider<Env>({
     // This callback runs before a refresh writes the grant back, which is the only
     // point where a disconnect can stop the connection from reviving itself. The
     // callback options carry no env, so the binding comes from the module scope.
-    if (grantType === 'refresh_token' && await isGrantRevoked((workerEnv as Env).OAUTH_KV, userId, grantId)) {
+    if (grantType === 'refresh_token' && await isGrantRevoked((workerEnv as Env).DB, userId, grantId)) {
       throw new OAuthError('invalid_grant', { description: 'この接続は切断されています' });
     }
     return {
