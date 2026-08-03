@@ -1,6 +1,7 @@
 import type { AuthRequest, ClientInfo } from '@cloudflare/workers-oauth-provider';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  CSP_REPORT_PATH,
   defaultHandler,
   grantedScopesForRequest,
   validateAuthorizationRequest,
@@ -360,5 +361,127 @@ describe('OAuth redirect validation', () => {
   it('requires exact matching for non-loopback callback hosts', async () => {
     const response = await fetchParseError('https://client.example:5678/cb', 'https://client.example:1234/cb');
     expect(response.status).toBe(400);
+  });
+});
+
+// A browser only ever sees the emitted header, so this evaluator is deliberately
+// independent of the production CSP builder: a wrong policy must not be able to
+// validate itself by sharing the code that produced it.
+function formActionAllows(csp: string, pageUrl: string, target: string): boolean {
+  const directive = csp
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part === 'form-action' || part.startsWith('form-action '));
+  if (!directive) return true;
+  const sources = directive.split(/\s+/).slice(1);
+  const targetUrl = new URL(target);
+  return sources.some((source) => {
+    if (source === "'self'") return targetUrl.origin === new URL(pageUrl).origin;
+    if (source === '*') return true;
+    if (/^[a-z][a-z0-9+.-]*:$/i.test(source)) return targetUrl.protocol === source.toLowerCase();
+    try {
+      return new URL(source).origin === targetUrl.origin;
+    } catch {
+      return false;
+    }
+  });
+}
+
+describe('consent CSP permits the redirect it will issue', () => {
+  const PAGE_URL = 'https://lifegame.example/authorize';
+
+  const env = {
+    AUTH_REQUIRED: 'false',
+    OAUTH_PROVIDER: {
+      lookupClient: async () => client(),
+      parseAuthRequest: async () => authorizationRequest(),
+      completeAuthorization: async () => ({ redirectTo: 'https://client.example/callback?code=code-1' }),
+    },
+  } as unknown as Env;
+
+  const fetchAuthorize = (request: Request) =>
+    defaultHandler.fetch!(
+      request as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
+      env,
+      {} as ExecutionContext,
+    );
+
+  it('rejects the pre-fix policy, proving the check has teeth', () => {
+    // form-action 'self' alone is what silently blocked the OAuth redirect.
+    expect(formActionAllows("form-action 'self'", PAGE_URL, 'https://client.example/callback?code=1')).toBe(false);
+    expect(formActionAllows("form-action 'self' https://client.example", PAGE_URL, 'https://client.example/cb')).toBe(true);
+    expect(formActionAllows("form-action 'self' myapp:", PAGE_URL, 'myapp://cb?code=1')).toBe(true);
+    expect(formActionAllows("form-action 'self' https://other.example", PAGE_URL, 'https://client.example/cb')).toBe(false);
+  });
+
+  it('allows a browser to follow the Location returned by an approval', async () => {
+    const page = await fetchAuthorize(new Request(PAGE_URL));
+    const csp = page.headers.get('Content-Security-Policy') ?? '';
+    const html = await page.text();
+    const flowId = html.match(/name="flow_id" value="([^"]+)"/)?.[1] ?? '';
+    const token = html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    const cookie = page.headers.get('Set-Cookie')?.split(';', 1)[0] ?? '';
+
+    const approval = await fetchAuthorize(
+      new Request(PAGE_URL, {
+        method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `decision=approve&flow_id=${encodeURIComponent(flowId)}&csrf_token=${encodeURIComponent(token)}`,
+      }),
+    );
+    expect(approval.status).toBe(302);
+
+    const location = approval.headers.get('Location') ?? '';
+    expect(location).toBeTruthy();
+    // The invariant the browser enforces: the policy served with the form must
+    // permit the redirect that submitting that form produces.
+    expect(formActionAllows(csp, PAGE_URL, location)).toBe(true);
+  });
+
+  it('points violation reports at an endpoint the page actually serves', async () => {
+    const page = await fetchAuthorize(new Request(PAGE_URL));
+    const csp = page.headers.get('Content-Security-Policy') ?? '';
+
+    expect(csp).toContain(`report-uri ${CSP_REPORT_PATH}`);
+    expect(csp).toContain('report-to csp-endpoint');
+    expect(page.headers.get('Reporting-Endpoints')).toBe(
+      `csp-endpoint="https://lifegame.example${CSP_REPORT_PATH}"`,
+    );
+  });
+});
+
+describe('CSP violation report endpoint', () => {
+  const fetchReport = (request: Request) =>
+    defaultHandler.fetch!(
+      request as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
+      {} as Env,
+      {} as ExecutionContext,
+    );
+  const url = `https://lifegame.example${CSP_REPORT_PATH}`;
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('logs a report and answers 204', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const response = await fetchReport(
+      new Request(url, { method: 'POST', body: '{"csp-report":{"blocked-uri":"https://client.example/cb"}}' }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(warn).toHaveBeenCalledWith('CSP violation report:', expect.stringContaining('blocked-uri'));
+  });
+
+  it('discards an oversized report without logging its body', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const response = await fetchReport(new Request(url, { method: 'POST', body: 'x'.repeat(9 * 1024) }));
+
+    expect(response.status).toBe(204);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('discarded'));
+  });
+
+  it('rejects methods other than POST', async () => {
+    const response = await fetchReport(new Request(url));
+
+    expect(response.status).toBe(405);
   });
 });

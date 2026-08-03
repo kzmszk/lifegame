@@ -26,7 +26,8 @@
       "/.well-known/*",
       "/register",
       "/token",
-      "/authorize"
+      "/authorize",
+      "/csp-report"
     ],
     "not_found_handling": "single-page-application"
   },

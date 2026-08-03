@@ -76,6 +76,7 @@ Cloudflare Zero TrustのAccessアプリでは、MCPのOAuthプロトコルをAcc
 - `/.well-known/*`
 - `/register`
 - `/token`
+- `/csp-report`（承認画面のCSP違反レポートの送信先。ブラウザからの無認証POSTなので除外が必要）
 
 `/authorize` は除外しない。認可画面はAccess配下に残り、Worker側でも
 `Cf-Access-Authenticated-User-Email` と `ALLOWED_EMAIL` を検証する。`/mcp` のタスクデータは
@@ -86,6 +87,20 @@ Cloudflare OAuthのBearer tokenが必須で、DCR・メタデータ・tokenエ�
 `wrangler.jsonc` では意図しない `workers.dev` とPreview URLも無効化している。AccessのBYPASSは
 上記のOAuthプロトコル用パスだけに限定すること。WorkerはAccessの前段検証を設計契約としており、
 `Cf-Access-Jwt-Assertion` の署名・issuer・audienceをWorker内で再検証する処理は将来のハードニング課題として残している。
+
+### 承認画面のCSPを変更するときの注意
+
+承認画面のCSPはブラウザ側でしか効果が現れないため、サーバーのテストでは壊れたことが分からない。
+実際に `form-action 'self'` がフォーム送信後のリダイレクト（Chromeは遮断、Firefoxは遮断しない）を
+止めてしまい、承認しても無反応になる不具合が起きた。以下で再発を抑える。
+
+- `src/oauth.test.ts` の「consent CSP permits the redirect it will issue」が、GETで返すCSPと
+  承認POSTが返す `Location` の整合をテスト側の独立した評価器で突き合わせている。CSPを触るときは
+  このテストを消さないこと
+- 違反は `report-uri` / `report-to` で `/csp-report` に送られ、Workerのログに出る
+  （`npx wrangler tail` で確認できる）。画面にもサーバーのエラーにも出ない失敗を拾うための唯一の手段
+- ディレクティブを追加・厳格化するときは、まず `Content-Security-Policy-Report-Only` で出して
+  違反レポートが出ないことを確認してから強制に切り替えるのが安全
 
 公開DCRの悪用を抑えるため、Cloudflareダッシュボード側で `/register` にIP単位のレート制限/WAFルールを
 設定する（例: POSTを1分あたり10件でchallengeまたはblock）。コード側でもメタデータの文字列・配列サイズを
