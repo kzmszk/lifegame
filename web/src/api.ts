@@ -1,4 +1,13 @@
-import type { ErrorResponse, Task, TaskCreateInput, TaskDraft, TaskUpdateInput, TaskView } from '../../src/shared/types';
+import type {
+  Connection,
+  ConnectionsResponse,
+  ErrorResponse,
+  Task,
+  TaskCreateInput,
+  TaskDraft,
+  TaskUpdateInput,
+  TaskView,
+} from '../../src/shared/types';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -51,4 +60,13 @@ export async function updateTask(id: number, input: TaskUpdateInput): Promise<Ta
 
 export async function removeTask(id: number): Promise<void> {
   await request<{ ok: true }>(`/api/tasks/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchConnections(): Promise<Connection[]> {
+  const response = await request<ConnectionsResponse>('/api/connections');
+  return response.connections;
+}
+
+export async function removeConnection(id: string): Promise<void> {
+  await request<{ ok: true }>(`/api/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

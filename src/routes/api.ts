@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import type { GrantSummary } from '@cloudflare/workers-oauth-provider';
 import { createTask, deleteTask, getTask, listTasks, updateTask, type TaskView } from '../db/tasks';
 import { parse } from '../lib/parse';
 import { getAccessUser, isAccessAuthError } from '../lib/access';
 import { tokyoDayBounds } from '../lib/time';
 import { fieldsFromBody, parseId, parseStatus, validateFields } from '../lib/task-validation';
 import type {
+  Connection,
   ErrorResponse,
   TaskCreateInput,
   TaskDraft,
@@ -13,6 +15,9 @@ import type {
 import type { Env } from '../env';
 
 const api = new Hono<{ Bindings: Env }>();
+const MAX_CONNECTION_LIST_PAGES = 5;
+const CONNECTION_LIST_PAGE_SIZE = 100;
+const MAX_GRANT_ID_LENGTH = 256;
 
 function error(c: Context<{ Bindings: Env }>, message: string, status: 400 | 401 | 403 | 404 | 405 | 500) {
   return c.json<ErrorResponse>({ error: message }, status);
@@ -134,8 +139,110 @@ api.delete('/tasks/:id', async (c) => {
   return deleted ? c.json({ ok: true }) : error(c, 'タスクが見つかりません', 404);
 });
 
+function clientNameForGrant(grant: GrantSummary): string {
+  if (typeof grant.metadata === 'object' && grant.metadata !== null && !Array.isArray(grant.metadata)) {
+    const clientName = (grant.metadata as Record<string, unknown>).clientName;
+    if (typeof clientName === 'string' && clientName.trim() !== '') return clientName;
+  }
+  return grant.clientId;
+}
+
+interface GrantScan {
+  grants: GrantSummary[];
+  /** True when the page budget ran out before the key space was exhausted. */
+  truncated: boolean;
+}
+
+// Each page costs one KV list plus one get per grant, against a 1000-operation
+// budget per invocation. The page cap keeps the worst case well inside it, with
+// room left for the revocation that may follow.
+async function scanConnectionGrants(
+  env: Env,
+  userId: string,
+  stopWhen?: (grant: GrantSummary) => boolean,
+): Promise<GrantScan> {
+  const grants: GrantSummary[] = [];
+  let cursor: string | undefined;
+
+  for (let page = 0; page < MAX_CONNECTION_LIST_PAGES; page += 1) {
+    const result = await env.OAUTH_PROVIDER.listUserGrants(userId, {
+      limit: CONNECTION_LIST_PAGE_SIZE,
+      ...(cursor ? { cursor } : {}),
+    });
+    grants.push(...result.items);
+    if (stopWhen && result.items.some(stopWhen)) return { grants, truncated: false };
+    if (!result.cursor) return { grants, truncated: false };
+    cursor = result.cursor;
+  }
+
+  // KV keeps returning a cursor after recently deleted keys, so an empty page is
+  // not proof that the scan is finished.
+  return { grants, truncated: true };
+}
+
+function toConnection(grant: GrantSummary): Connection {
+  return {
+    id: grant.id,
+    client_id: grant.clientId,
+    client_name: clientNameForGrant(grant),
+    scope: grant.scope,
+    created_at: grant.createdAt,
+  };
+}
+
+function isValidGrantId(grantId: string): boolean {
+  return grantId.length > 0
+    && grantId.length <= MAX_GRANT_ID_LENGTH
+    && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(grantId);
+}
+
+api.get('/connections', async (c) => {
+  const accessUser = getAccessUser(c.env, c.req.raw);
+  if (isAccessAuthError(accessUser)) return error(c, accessUser.message, accessUser.status);
+
+  const scan = await scanConnectionGrants(c.env, accessUser.email);
+  if (scan.truncated) console.warn('接続一覧を打ち切りました（ページ上限に到達）');
+  const connections = scan.grants
+    .map(toConnection)
+    .sort((left, right) => right.created_at - left.created_at);
+  return c.json({ connections });
+});
+
+async function revokeConnection(c: Context<{ Bindings: Env }>) {
+  const grantId = c.req.param('id') ?? '';
+  if (!isValidGrantId(grantId)) return error(c, '接続IDが不正です', 400);
+
+  const accessUser = getAccessUser(c.env, c.req.raw);
+  if (isAccessAuthError(accessUser)) return error(c, accessUser.message, accessUser.status);
+
+  // revokeGrant() is idempotent, so ownership is confirmed first to tell a missing
+  // grant from a revoked one. The scan stops at the match instead of reading every page.
+  const scan = await scanConnectionGrants(c.env, accessUser.email, (grant) => grant.id === grantId);
+  if (!scan.grants.some((grant) => grant.id === grantId)) {
+    // A truncated scan cannot prove absence; saying "not found" here would be a lie.
+    return scan.truncated
+      ? error(c, '接続数が多く、確認しきれませんでした', 500)
+      : error(c, '接続が見つかりません', 404);
+  }
+
+  // A refresh racing with revocation re-saves the grant it just read, which both
+  // resurrects the connection and leaves its new token behind. Revoking twice sweeps
+  // that up: the first pass deletes the grant, after which no new token can be minted.
+  await c.env.OAUTH_PROVIDER.revokeGrant(grantId, accessUser.email);
+  await c.env.OAUTH_PROVIDER.revokeGrant(grantId, accessUser.email);
+  return c.json({ ok: true });
+}
+
+api.delete('/connections/:id', revokeConnection);
+// Keep an empty ID in the connection route so it gets a validation error instead of a generic 404.
+api.delete('/connections/', revokeConnection);
+
 function knownApiPath(path: string): boolean {
-  return path === '/tasks' || path === '/tasks/parse' || /^\/tasks\/[^/]+$/.test(path);
+  return path === '/tasks'
+    || path === '/tasks/parse'
+    || path === '/connections'
+    || path === '/connections/'
+    || /^\/(tasks|connections)\/[^/]+$/.test(path);
 }
 
 // This route is copied to the parent app by app.route(), so unknown /api/* requests
@@ -143,7 +250,18 @@ function knownApiPath(path: string): boolean {
 api.all('*', (c) => {
   const path = relativeApiPath(c.req.path);
   if (knownApiPath(path)) {
-    c.header('Allow', path === '/tasks' ? 'GET, POST' : path === '/tasks/parse' ? 'POST' : 'GET, PATCH, DELETE');
+    c.header(
+      'Allow',
+      path === '/tasks'
+        ? 'GET, POST'
+        : path === '/tasks/parse'
+          ? 'POST'
+          : path === '/connections'
+            ? 'GET'
+            : path.startsWith('/connections/')
+              ? 'DELETE'
+              : 'GET, PATCH, DELETE',
+    );
     return error(c, 'このAPIメソッドは対応していません', 405);
   }
   return error(c, 'API endpoint が見つかりません', 404);

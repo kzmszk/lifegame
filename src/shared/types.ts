@@ -46,6 +46,18 @@ export interface TaskUpdateInput {
   status?: TaskStatus;
 }
 
+export interface Connection {
+  id: string;
+  client_id: string;
+  client_name: string;
+  scope: string[];
+  created_at: number;
+}
+
+export interface ConnectionsResponse {
+  connections: Connection[];
+}
+
 export interface TasksResponse {
   tasks: Task[];
 }
