@@ -143,6 +143,26 @@ describe('OAuth consent CSRF protection', () => {
       {} as ExecutionContext,
     );
 
+  it('allows the approved callback origin in form-action so the OAuth redirect is not blocked', async () => {
+    const env = makeEnv({ count: 0 });
+    const page = await fetchAuthorize(new Request('https://lifegame.example/authorize'), env);
+    const csp = page.headers.get('Content-Security-Policy') ?? '';
+
+    // form-action also applies to the redirect that follows the submission.
+    expect(csp).toContain("form-action 'self' https://client.example;");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(await page.text()).toContain("form-action &#39;self&#39; https://client.example;");
+  });
+
+  it('allows a custom-scheme callback by scheme in form-action', async () => {
+    const env = makeEnv({ count: 0 });
+    (env as unknown as { OAUTH_PROVIDER: { parseAuthRequest: () => Promise<AuthRequest> } }).OAUTH_PROVIDER.parseAuthRequest =
+      async () => authorizationRequest({ redirectUri: 'myapp://callback' });
+    const page = await fetchAuthorize(new Request('https://lifegame.example/authorize'), env);
+
+    expect(page.headers.get('Content-Security-Policy')).toContain("form-action 'self' myapp:;");
+  });
+
   it('keeps concurrent consent flows valid when both GETs see the same cookie state', async () => {
     const completed = { count: 0 };
     const env = makeEnv(completed);

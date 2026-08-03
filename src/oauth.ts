@@ -175,9 +175,29 @@ export function grantedScopesForRequest(requestedScopes: string[]): SupportedSco
   return requestedScopes.length > 0 ? (requestedScopes as SupportedScope[]) : [...SUPPORTED_SCOPES];
 }
 
+// form-action also constrains the redirect that follows the submission, so the
+// approved client's callback origin must be allowed or the OAuth redirect is
+// silently blocked by the browser after the grant has already been stored.
+function consentFormActionSource(redirectUri: string): string | null {
+  try {
+    const url = new URL(redirectUri);
+    // Custom-scheme callbacks (myapp://...) have an opaque origin; allow the scheme.
+    return url.origin && url.origin !== 'null' ? url.origin : url.protocol;
+  } catch {
+    return null;
+  }
+}
+
+function consentCsp(redirectUri: string): string {
+  const callbackSource = consentFormActionSource(redirectUri);
+  const formAction = callbackSource ? `'self' ${callbackSource}` : "'self'";
+  return `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; frame-ancestors 'none'`;
+}
+
 function consentPage(request: Request, oauthRequest: AuthRequest, client: ClientInfo): Response {
   const action = new URL(request.url);
   action.pathname = '/authorize';
+  const csp = consentCsp(oauthRequest.redirectUri);
   const flowId = crypto.randomUUID();
   const csrfToken = crypto.randomUUID();
   const requestedScopes =
@@ -189,7 +209,7 @@ function consentPage(request: Request, oauthRequest: AuthRequest, client: Client
   const html = `<!doctype html>
 <html lang="ja">
   <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>lifegameの接続許可</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'">
+  <meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}">
   <style>body{font-family:system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;line-height:1.6;color:#202124}main{border:1px solid #dadce0;border-radius:12px;padding:1.5rem}button{border:0;border-radius:8px;padding:.7rem 1.1rem;font:inherit;cursor:pointer}button[name=decision][value=approve]{background:#1769aa;color:white}button[name=decision][value=deny]{background:#f1f3f4;margin-left:.5rem}code{overflow-wrap:anywhere}ul{padding-left:1.3rem}</style>
   </head>
   <body><main>
@@ -209,7 +229,7 @@ function consentPage(request: Request, oauthRequest: AuthRequest, client: Client
     headers: {
       'content-type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
+      'Content-Security-Policy': csp,
       'X-Frame-Options': 'DENY',
       'Set-Cookie': serializeConsentCsrfCookie(consentCsrfCookieName(flowId)!, csrfToken),
     },
