@@ -9,7 +9,12 @@ import { registerLifegameTools } from './registration';
 
 function liveDb() {
   return {
-    prepare: () => ({ bind: () => ({ first: async () => null, run: async () => ({ success: true, meta: { changes: 0 } }) }) }),
+    prepare: () => ({
+      bind: () => ({
+        first: async () => null,
+        run: async () => ({ success: true, meta: { changes: 0 } }),
+      }),
+    }),
   } as unknown as D1Database;
 }
 
@@ -19,24 +24,52 @@ describe('MCP tool registration', () => {
     const props = { email: 'owner@example.com', scopes: ['tasks:read'] };
     registerLifegameTools(server, liveDb(), () => props);
 
-    const registeredTools = (server as unknown as {
-      _registeredTools: Record<string, {
-        annotations?: Record<string, unknown>;
-        inputSchema?: z.ZodType;
-        handler: (input: unknown) => Promise<unknown>;
-      }>;
-    })._registeredTools;
+    const registeredTools = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          {
+            annotations?: Record<string, unknown>;
+            inputSchema?: z.ZodType;
+            handler: (input: unknown) => Promise<unknown>;
+          }
+        >;
+      }
+    )._registeredTools;
 
-    expect(registeredTools.get_daily_summary.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
-    expect(registeredTools.list_tasks.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
-    expect(registeredTools.create_task.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
-    expect(registeredTools.update_task.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
-    expect(registeredTools.delete_task.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
-    expect((registeredTools.create_task.inputSchema as z.ZodType).safeParse({ title: '' }).success).toBe(false);
+    expect(registeredTools.get_daily_summary.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(registeredTools.list_tasks.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(registeredTools.create_task.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+    });
+    expect(registeredTools.update_task.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(registeredTools.delete_task.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(
+      (registeredTools.create_task.inputSchema as z.ZodType).safeParse({
+        title: '',
+      }).success,
+    ).toBe(false);
 
-    const result = await registeredTools.create_task.handler({ title: '書き込み' });
+    const result = await registeredTools.create_task.handler({
+      title: '書き込み',
+    });
     expect(result).toMatchObject({ isError: true });
-    expect((result as { content: Array<{ text: string }> }).content[0].text).toContain('tasks:write');
+    expect(
+      (result as { content: Array<{ text: string }> }).content[0].text,
+    ).toContain('tasks:write');
   });
 
   it('returns only update metadata without tasks:read and the full task with both scopes', async () => {
@@ -64,20 +97,42 @@ describe('MCP tool registration', () => {
     let props = { email: 'owner@example.com', scopes: ['tasks:write'] };
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     registerLifegameTools(server, db, () => props);
-    const registeredTools = (server as unknown as {
-      _registeredTools: Record<string, { handler: (input: unknown) => Promise<unknown> }>;
-    })._registeredTools;
+    const registeredTools = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          { handler: (input: unknown) => Promise<unknown> }
+        >;
+      }
+    )._registeredTools;
 
-    const writeOnlyResult = await registeredTools.update_task.handler({ id: 7, priority: 0 });
-    const writeOnlyPayload = JSON.parse((writeOnlyResult as { content: Array<{ text: string }> }).content[0].text) as Record<string, unknown>;
-    expect(writeOnlyPayload).toEqual({ updated: true, id: 7, fields: ['priority'] });
+    const writeOnlyResult = await registeredTools.update_task.handler({
+      id: 7,
+      priority: 0,
+    });
+    const writeOnlyPayload = JSON.parse(
+      (writeOnlyResult as { content: Array<{ text: string }> }).content[0].text,
+    ) as Record<string, unknown>;
+    expect(writeOnlyPayload).toEqual({
+      updated: true,
+      id: 7,
+      fields: ['priority'],
+    });
     expect(JSON.stringify(writeOnlyPayload)).not.toContain('秘密のタイトル');
     expect(JSON.stringify(writeOnlyPayload)).not.toContain('秘密のメモ');
     expect(JSON.stringify(writeOnlyPayload)).not.toContain('秘密');
 
-    props = { email: 'owner@example.com', scopes: ['tasks:read', 'tasks:write'] };
-    const fullResult = await registeredTools.update_task.handler({ id: 7, priority: 0 });
-    const fullPayload = JSON.parse((fullResult as { content: Array<{ text: string }> }).content[0].text) as {
+    props = {
+      email: 'owner@example.com',
+      scopes: ['tasks:read', 'tasks:write'],
+    };
+    const fullResult = await registeredTools.update_task.handler({
+      id: 7,
+      priority: 0,
+    });
+    const fullPayload = JSON.parse(
+      (fullResult as { content: Array<{ text: string }> }).content[0].text,
+    ) as {
       task: typeof storedTask;
     };
     expect(fullPayload.task).toEqual(storedTask);
@@ -89,19 +144,31 @@ describe('MCP tool registration', () => {
     const revokedDb = {
       prepare: (sql: string) => ({
         bind: (userId: string, grantId: string) => ({
-          first: async () => (sql.includes('revoked_grants') && userId === 'owner@example.com' && grantId === 'grant-1'
-            ? { revoked: 1 }
-            : null),
+          first: async () =>
+            sql.includes('revoked_grants') &&
+            userId === 'owner@example.com' &&
+            grantId === 'grant-1'
+              ? { revoked: 1 }
+              : null,
           run: async () => ({ success: true, meta: { changes: 1 } }),
         }),
       }),
     } as unknown as D1Database;
     const server = new McpServer({ name: 'test', version: '1.0.0' });
-    const props = { email: 'owner@example.com', scopes: ['tasks:read', 'tasks:write'], grantId: 'grant-1' };
+    const props = {
+      email: 'owner@example.com',
+      scopes: ['tasks:read', 'tasks:write'],
+      grantId: 'grant-1',
+    };
     registerLifegameTools(server, revokedDb, () => props);
-    const registeredTools = (server as unknown as {
-      _registeredTools: Record<string, { handler: (input: unknown) => Promise<unknown> }>;
-    })._registeredTools;
+    const registeredTools = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          { handler: (input: unknown) => Promise<unknown> }
+        >;
+      }
+    )._registeredTools;
 
     for (const [name, input] of [
       ['get_daily_summary', {}],
@@ -113,7 +180,9 @@ describe('MCP tool registration', () => {
       const result = await registeredTools[name].handler(input);
 
       expect(result, name).toMatchObject({ isError: true });
-      expect((result as { content: Array<{ text: string }> }).content[0].text).toContain('切断されています');
+      expect(
+        (result as { content: Array<{ text: string }> }).content[0].text,
+      ).toContain('切断されています');
     }
   });
 });

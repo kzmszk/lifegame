@@ -7,8 +7,14 @@ function tokyoParts(now: Date): { year: number; month: number; day: number } {
     month: '2-digit',
     day: '2-digit',
   }).formatToParts(now);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return { year: Number(values.year), month: Number(values.month), day: Number(values.day) };
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+  };
 }
 
 function formatDate(year: number, month: number, day: number): string {
@@ -36,5 +42,9 @@ export function tokyoDayBounds(now: Date = new Date()): {
   // Asia/Tokyo is UTC+09:00 and has no DST transitions.
   const start = new Date(Date.UTC(year, month - 1, day) - 9 * 60 * 60 * 1000);
   const nextStart = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-  return { today: formatDate(year, month, day), startUtc: formatSqlUtc(start), nextStartUtc: formatSqlUtc(nextStart) };
+  return {
+    today: formatDate(year, month, day),
+    startUtc: formatSqlUtc(start),
+    nextStartUtc: formatSqlUtc(nextStart),
+  };
 }

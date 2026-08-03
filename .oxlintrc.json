@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react"],
+  "env": {
+    "browser": true,
+    "node": true,
+    "serviceworker": true,
+    "vitest": true
+  },
+  "ignorePatterns": ["coverage/", "dist/", "public/", ".wrangler/"],
+  "rules": {
+    "react/exhaustive-deps": "error",
+    "react/only-export-components": [
+      "error",
+      {
+        "allowConstantExport": true
+      }
+    ],
+    "react/rules-of-hooks": "error"
+  }
+}

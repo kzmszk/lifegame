@@ -19,9 +19,15 @@ function serializedByteLength(value: string): number {
 
 function scalarSerializedByteLength(value: unknown): number {
   if (typeof value === 'string') return serializedByteLength(value);
-  if (value === null || typeof value === 'boolean' || typeof value === 'number') {
+  if (
+    value === null ||
+    typeof value === 'boolean' ||
+    typeof value === 'number'
+  ) {
     const serialized = JSON.stringify(value);
-    return serialized === undefined ? 0 : metadataTextEncoder.encode(serialized).byteLength;
+    return serialized === undefined
+      ? 0
+      : metadataTextEncoder.encode(serialized).byteLength;
   }
   return 0;
 }
@@ -48,33 +54,54 @@ function metadataSizeError(
   budget.nodes += 1;
   if (budget.nodes > MAX_CLIENT_METADATA_NODES) return nodeCountError();
 
-  if (typeof value === 'string' && value.length > MAX_CLIENT_METADATA_STRING_LENGTH) {
+  if (
+    typeof value === 'string' &&
+    value.length > MAX_CLIENT_METADATA_STRING_LENGTH
+  ) {
     return `${path} is too long`;
   }
   if (!Array.isArray(value) && (value === null || typeof value !== 'object')) {
-    return addBytes(budget, scalarSerializedByteLength(value)) ? null : totalSizeError();
+    return addBytes(budget, scalarSerializedByteLength(value))
+      ? null
+      : totalSizeError();
   }
   if (Array.isArray(value)) {
-    if (value.length > MAX_CLIENT_METADATA_ARRAY_LENGTH) return `${path} has too many items`;
-    if (depth >= MAX_CLIENT_METADATA_DEPTH) return `${path} is too deeply nested`;
+    if (value.length > MAX_CLIENT_METADATA_ARRAY_LENGTH)
+      return `${path} has too many items`;
+    if (depth >= MAX_CLIENT_METADATA_DEPTH)
+      return `${path} is too deeply nested`;
     if (!addBytes(budget, 1)) return totalSizeError();
     for (const [index, item] of value.entries()) {
       if (index > 0 && !addBytes(budget, 1)) return totalSizeError();
-      const error = metadataSizeError(item, `${path}[${index}]`, depth + 1, budget);
+      const error = metadataSizeError(
+        item,
+        `${path}[${index}]`,
+        depth + 1,
+        budget,
+      );
       if (error) return error;
     }
     return addBytes(budget, 1) ? null : totalSizeError();
   }
   if (typeof value === 'object' && value !== null) {
     const entries = Object.entries(value);
-    if (entries.length > MAX_CLIENT_METADATA_OBJECT_KEYS) return `${path} has too many fields`;
-    if (depth >= MAX_CLIENT_METADATA_DEPTH) return `${path} is too deeply nested`;
+    if (entries.length > MAX_CLIENT_METADATA_OBJECT_KEYS)
+      return `${path} has too many fields`;
+    if (depth >= MAX_CLIENT_METADATA_DEPTH)
+      return `${path} is too deeply nested`;
     if (!addBytes(budget, 1)) return totalSizeError();
     for (const [index, [key, item]] of entries.entries()) {
-      if (key.length > MAX_CLIENT_METADATA_KEY_LENGTH) return `${path} has a key that is too long`;
+      if (key.length > MAX_CLIENT_METADATA_KEY_LENGTH)
+        return `${path} has a key that is too long`;
       if (index > 0 && !addBytes(budget, 1)) return totalSizeError();
-      if (!addBytes(budget, serializedByteLength(key) + 1)) return totalSizeError();
-      const error = metadataSizeError(item, `${path}.${key}`, depth + 1, budget);
+      if (!addBytes(budget, serializedByteLength(key) + 1))
+        return totalSizeError();
+      const error = metadataSizeError(
+        item,
+        `${path}.${key}`,
+        depth + 1,
+        budget,
+      );
       if (error) return error;
     }
     if (!addBytes(budget, 1)) return totalSizeError();
@@ -86,5 +113,7 @@ export function validateClientRegistrationMetadata(
   clientMetadata: Record<string, unknown>,
 ): { code: 'invalid_client_metadata'; description: string } | undefined {
   const error = metadataSizeError(clientMetadata);
-  return error ? { code: 'invalid_client_metadata', description: error } : undefined;
+  return error
+    ? { code: 'invalid_client_metadata', description: error }
+    : undefined;
 }

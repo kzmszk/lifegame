@@ -9,13 +9,13 @@
   "routes": [
     {
       "pattern": "lifegame.tachicoma.com",
-      "custom_domain": true
-    }
+      "custom_domain": true,
+    },
   ],
   "compatibility_date": "2025-04-01",
   "compatibility_flags": ["nodejs_compat"],
   "build": {
-    "command": "npm run build"
+    "command": "npm run build",
   },
   "assets": {
     "directory": "./public",
@@ -27,40 +27,40 @@
       "/register",
       "/token",
       "/authorize",
-      "/csp-report"
+      "/csp-report",
     ],
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "lifegame",
       "database_id": "add71ef2-9c9c-44cb-acc6-5e24f987f741",
-      "migrations_dir": "./migrations"
-    }
+      "migrations_dir": "./migrations",
+    },
   ],
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
-      "id": "54391d80a5ff4fe592f08c08d784cae1"
-    }
+      "id": "54391d80a5ff4fe592f08c08d784cae1",
+    },
   ],
   "durable_objects": {
     "bindings": [
       {
         "name": "MCP_OBJECT",
-        "class_name": "LifegameMcp"
-      }
-    ]
+        "class_name": "LifegameMcp",
+      },
+    ],
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["LifegameMcp"]
-    }
+      "new_sqlite_classes": ["LifegameMcp"],
+    },
   ],
   // Production is authenticated by default. Local development overrides this in .dev.vars.
   "vars": {
-    "AUTH_REQUIRED": "true"
-  }
+    "AUTH_REQUIRED": "true",
+  },
 }

@@ -8,9 +8,25 @@
     "dev:worker": "wrangler dev",
     "dev:web": "vite --config web/vite.config.ts",
     "build": "vite build --config web/vite.config.ts",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint . --deny-warnings",
+    "lint:fix": "oxlint . --fix --deny-warnings",
+    "prepare": "husky",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "skill:zip": "mkdir -p dist && rm -f dist/morning-briefing.zip && cd skills && zip -qr ../dist/morning-briefing.zip morning-briefing -x 'morning-briefing/INSTALL.md'"
+  },
+  "engines": {
+    "node": "^22.22.1 || >=24"
+  },
+  "lint-staged": {
+    "*.{js,ts,tsx}": [
+      "oxfmt",
+      "oxlint --fix --deny-warnings --no-error-on-unmatched-pattern"
+    ],
+    "*.{css,html,json,jsonc,md,yaml,yml}": "oxfmt"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.8.2",
@@ -27,6 +43,10 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.4.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.3.0",
+    "oxfmt": "^0.61.0",
+    "oxlint": "^1.76.0",
     "typescript": "^5.8.2",
     "vite": "^6.2.0",
     "vitest": "^3.0.8",
