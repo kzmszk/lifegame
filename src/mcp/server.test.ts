@@ -3,12 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { registerLifegameTools } from './registration';
+import type { Env } from '../env';
+
+// No grant marker in these fixtures, so every lookup reports the grant still live.
+const liveKv = { get: async () => null, put: async () => undefined } as unknown as Env['OAUTH_KV'];
 
 describe('MCP tool registration', () => {
   it('publishes read/write/destructive annotations and returns tool errors for missing scopes', async () => {
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     const props = { email: 'owner@example.com', scopes: ['tasks:read'] };
-    registerLifegameTools(server, {} as D1Database, () => props);
+    registerLifegameTools(server, {} as D1Database, () => props, liveKv);
 
     const registeredTools = (server as unknown as {
       _registeredTools: Record<string, {
@@ -54,7 +58,7 @@ describe('MCP tool registration', () => {
     } as unknown as D1Database;
     let props = { email: 'owner@example.com', scopes: ['tasks:write'] };
     const server = new McpServer({ name: 'test', version: '1.0.0' });
-    registerLifegameTools(server, db, () => props);
+    registerLifegameTools(server, db, () => props, liveKv);
     const registeredTools = (server as unknown as {
       _registeredTools: Record<string, { handler: (input: unknown) => Promise<unknown> }>;
     })._registeredTools;
@@ -72,5 +76,33 @@ describe('MCP tool registration', () => {
       task: typeof storedTask;
     };
     expect(fullPayload.task).toEqual(storedTask);
+  });
+
+  it('refuses every tool for a token whose grant was revoked', async () => {
+    // Stands in for the token a refresh minted while racing a disconnect: the
+    // provider still accepts it, so the tools are where it has to be stopped.
+    const revokedKv = {
+      get: async (key: string) => (key === 'revoked:owner@example.com:grant-1' ? '1' : null),
+      put: async () => undefined,
+    } as unknown as Env['OAUTH_KV'];
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    const props = { email: 'owner@example.com', scopes: ['tasks:read', 'tasks:write'], grantId: 'grant-1' };
+    registerLifegameTools(server, {} as D1Database, () => props, revokedKv);
+    const registeredTools = (server as unknown as {
+      _registeredTools: Record<string, { handler: (input: unknown) => Promise<unknown> }>;
+    })._registeredTools;
+
+    for (const [name, input] of [
+      ['get_daily_summary', {}],
+      ['list_tasks', { view: 'today' }],
+      ['create_task', { title: '追加' }],
+      ['update_task', { id: 1, priority: 1 }],
+      ['delete_task', { id: 1 }],
+    ] as const) {
+      const result = await registeredTools[name].handler(input);
+
+      expect(result, name).toMatchObject({ isError: true });
+      expect((result as { content: Array<{ text: string }> }).content[0].text).toContain('切断されています');
+    }
   });
 });

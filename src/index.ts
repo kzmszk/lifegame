@@ -9,11 +9,13 @@ import { isGrantRevoked } from './lib/revocation';
 
 const CLIENT_REGISTRATION_TTL = 7 * 24 * 60 * 60;
 
-function propsWithScopes(props: unknown, scopes: string[]): Record<string, unknown> {
+function propsWithScopes(props: unknown, scopes: string[], grantId: string): Record<string, unknown> {
   const current = typeof props === 'object' && props !== null && !Array.isArray(props)
     ? (props as Record<string, unknown>)
     : {};
-  return { ...current, scopes: [...scopes] };
+  // grantId travels with the token so MCP tool handlers can refuse a token whose
+  // grant was revoked, which is the only place a raced refresh can still be caught.
+  return { ...current, scopes: [...scopes], grantId };
 }
 
 export { app };
@@ -43,7 +45,7 @@ export default new OAuthProvider<Env>({
     return {
       // Keep grant props broad for refreshes, while making each access token's
       // effective/downscoped permissions explicit to MCP tool handlers.
-      accessTokenProps: propsWithScopes(props, requestedScope),
+      accessTokenProps: propsWithScopes(props, requestedScope, grantId),
       accessTokenScope: requestedScope,
     };
   },

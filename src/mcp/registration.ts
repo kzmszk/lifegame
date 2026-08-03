@@ -1,7 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { McpAuthProps } from './auth';
-import { assertMcpScope, hasMcpScope } from './auth';
+import type { McpAuthProps, McpScope } from './auth';
+import type { Env } from '../env';
+import { assertGrantActive, assertMcpScope, hasMcpScope } from './auth';
 import {
   createTaskForMcp,
   deleteTaskForMcp,
@@ -56,7 +57,17 @@ export function registerLifegameTools(
   server: McpServer,
   db: D1Database,
   getProps: () => McpAuthProps | undefined,
+  kv: Env['OAUTH_KV'],
 ): void {
+  // Every tool goes through this: the scope check answers "may this token do it",
+  // the revocation check answers "is this connection still supposed to exist".
+  async function authorize(requiredScope: McpScope): Promise<McpAuthProps | undefined> {
+    const props = getProps();
+    assertMcpScope(props, requiredScope);
+    await assertGrantActive(kv, props);
+    return props;
+  }
+
   server.registerTool(
     'get_daily_summary',
     {
@@ -65,7 +76,7 @@ export function registerLifegameTools(
     },
     async () => {
       try {
-        assertMcpScope(getProps(), 'tasks:read');
+        await authorize('tasks:read');
         return jsonToolResult(await getDailySummary(db));
       } catch (error) {
         return errorToolResult(error);
@@ -82,7 +93,7 @@ export function registerLifegameTools(
     },
     async ({ view }) => {
       try {
-        assertMcpScope(getProps(), 'tasks:read');
+        await authorize('tasks:read');
         return jsonToolResult({ tasks: await listTasksForMcp(db, view) });
       } catch (error) {
         return errorToolResult(error);
@@ -99,7 +110,7 @@ export function registerLifegameTools(
     },
     async (input) => {
       try {
-        assertMcpScope(getProps(), 'tasks:write');
+        await authorize('tasks:write');
         // The returned task content comes from the caller, unlike update_task's stored row.
         return jsonToolResult({ task: await createTaskForMcp(db, input) });
       } catch (error) {
@@ -117,8 +128,7 @@ export function registerLifegameTools(
     },
     async ({ id, ...fields }) => {
       try {
-        const props = getProps();
-        assertMcpScope(props, 'tasks:write');
+        const props = await authorize('tasks:write');
         const task = await updateTaskForMcp(db, id, fields);
         if (hasMcpScope(props, 'tasks:read')) return jsonToolResult({ task });
 
@@ -144,7 +154,7 @@ export function registerLifegameTools(
     },
     async ({ id }) => {
       try {
-        assertMcpScope(getProps(), 'tasks:write');
+        await authorize('tasks:write');
         return jsonToolResult(await deleteTaskForMcp(db, id));
       } catch (error) {
         return errorToolResult(error);
