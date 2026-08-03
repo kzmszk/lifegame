@@ -145,7 +145,8 @@ DCR により Claude 側が自動で登録する。設定に必要なのはURL�
 1. 実装は Codex に委譲(`--model gpt-5.6-luna --effort xhigh`)
 2. レビューも Codex(`--model gpt-5.6-sol --effort xhigh`)、指摘は Critical/Major/Minor すべて対応
 3. 数行で済む小さな修正は Claude が直接行う
-4. 変更は必ず PR にする。GitHub の Codex ボットが自動レビューするので、その指摘にも対応してからマージ
+4. 変更は必ず PR にする。GitHub の Codex ボットが自動レビューするので、その指摘にも対応してからマージ。
+   ただし**このファイルの更新は PR にせず main へ直接 push する**(レビューする相手がいないため)
 5. コミット前に `npm run check`(format / lint / typecheck / test / build)。husky が staged 分を見る。
    CI も PR と main への push で同じものを回す
 
