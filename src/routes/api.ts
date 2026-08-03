@@ -6,7 +6,7 @@ import { parse } from '../lib/parse';
 import { getAccessUser, isAccessAuthError } from '../lib/access';
 import { tokyoDayBounds } from '../lib/time';
 import { fieldsFromBody, parseId, parseStatus, validateFields } from '../lib/task-validation';
-import { markGrantRevoked } from '../lib/revocation';
+import { markGrantRevoked, revokedGrantIds } from '../lib/revocation';
 import type {
   Connection,
   ErrorResponse,
@@ -201,9 +201,15 @@ api.get('/connections', async (c) => {
   const accessUser = getAccessUser(c.env, c.req.raw);
   if (isAccessAuthError(accessUser)) return error(c, accessUser.message, accessUser.status);
 
-  const scan = await scanConnectionGrants(c.env, accessUser.email);
+  const [scan, revoked] = await Promise.all([
+    scanConnectionGrants(c.env, accessUser.email),
+    revokedGrantIds(c.env.DB, accessUser.email),
+  ]);
   if (scan.truncated) console.warn('接続一覧を打ち切りました（ページ上限に到達）');
+  // A refresh that wrote back after the sweeps leaves a grant the tools already
+  // refuse. Listing it would show a connection the user was told was disconnected.
   const connections = scan.grants
+    .filter((grant) => !revoked.has(grant.id))
     .map(toConnection)
     .sort((left, right) => right.created_at - left.created_at);
   // A partial list that looks complete would hide connections the user cannot

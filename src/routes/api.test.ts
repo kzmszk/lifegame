@@ -5,7 +5,13 @@ import { app } from '../app';
 function env(overrides: Record<string, unknown> = {}) {
   return {
     DB: {
-      prepare: () => ({ bind: () => ({ run: async () => ({ success: true, meta: { changes: 1 } }), first: async () => null }) }),
+      prepare: () => ({
+        bind: () => ({
+          run: async () => ({ success: true, meta: { changes: 1 } }),
+          first: async () => null,
+          all: async () => ({ results: [] }),
+        }),
+      }),
     } as unknown as D1Database,
     ASSETS: { fetch: vi.fn() },
     AUTH_REQUIRED: 'false',
@@ -107,6 +113,39 @@ describe('API safety boundaries', () => {
     expect(listUserGrants).toHaveBeenNthCalledWith(2, 'me@example.com', { limit: 100, cursor: 'page-2' });
   });
 
+  it('hides a grant that a raced refresh wrote back after it was revoked', async () => {
+    const DB = {
+      prepare: () => ({
+        bind: () => ({
+          all: async () => ({ results: [{ grant_id: 'grant-zombie' }] }),
+          run: async () => ({ success: true, meta: { changes: 1 } }),
+          first: async () => null,
+        }),
+      }),
+    } as unknown as D1Database;
+    const response = await app.request(
+      '/api/connections',
+      {},
+      env({
+        DB,
+        OAUTH_PROVIDER: {
+          listUserGrants: vi.fn().mockResolvedValue({
+            items: [
+              { id: 'grant-zombie', clientId: 'c1', userId: 'local-dev', scope: [], metadata: {}, createdAt: 2 },
+              { id: 'grant-live', clientId: 'c2', userId: 'local-dev', scope: [], metadata: {}, createdAt: 1 },
+            ],
+          }),
+        },
+      }),
+    );
+
+    // Listing it would contradict the disconnect the user was already told succeeded.
+    expect(await response.json()).toEqual({
+      connections: [{ id: 'grant-live', client_id: 'c2', client_name: 'c2', scope: [], created_at: 1 }],
+      truncated: false,
+    });
+  });
+
   it('passes the Access email to revokeGrant and ignores a userId query parameter', async () => {
     const revokeGrant = vi.fn().mockResolvedValue(undefined);
     const response = await app.request(
@@ -144,6 +183,7 @@ describe('API safety boundaries', () => {
             return { success: true, meta: { changes: 1 } };
           },
           first: async () => null,
+          all: async () => ({ results: [] }),
         }),
       }),
     };
