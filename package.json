@@ -13,12 +13,16 @@
     "format:check": "prettier --check . --ignore-unknown",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
+    "prepare": "husky",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "skill:zip": "mkdir -p dist && rm -f dist/morning-briefing.zip && cd skills && zip -qr ../dist/morning-briefing.zip morning-briefing -x 'morning-briefing/INSTALL.md'"
   },
   "engines": {
     "node": ">=22.13.0"
+  },
+  "lint-staged": {
+    "*.{css,html,js,json,jsonc,md,ts,tsx,yaml,yml}": "prettier --write"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.8.2",
@@ -41,6 +45,8 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.9.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.3.0",
     "prettier": "^3.9.6",
     "typescript": "^5.8.2",
     "typescript-eslint": "^8.65.0",
