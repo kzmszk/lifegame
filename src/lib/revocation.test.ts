@@ -14,7 +14,8 @@ function fakeDb() {
           rows.add(`${userId}\u0000${grantId}`);
           return { success: true, meta: { changes: 1 } };
         },
-        first: async () => (rows.has(`${userId}\u0000${grantId}`) ? { revoked: 1 } : null),
+        first: async () =>
+          rows.has(`${userId}\u0000${grantId}`) ? { revoked: 1 } : null,
       }),
     }),
   } as unknown as D1Database;
@@ -38,7 +39,9 @@ describe('grant revocation records', () => {
     await markGrantRevoked(db, 'me@example.com', 'grant-1');
 
     expect(await isGrantRevoked(db, 'me@example.com', 'grant-2')).toBe(false);
-    expect(await isGrantRevoked(db, 'someone-else@example.com', 'grant-1')).toBe(false);
+    expect(
+      await isGrantRevoked(db, 'someone-else@example.com', 'grant-1'),
+    ).toBe(false);
   });
 
   it('stays revoked when the same grant is revoked twice', async () => {

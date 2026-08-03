@@ -1,0 +1,7 @@
+.claude/
+coverage/
+dist/
+node_modules/
+public/
+.wrangler/
+package-lock.json

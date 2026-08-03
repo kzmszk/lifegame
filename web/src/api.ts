@@ -18,7 +18,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   });
   const body = (await response.json().catch(() => ({}))) as T | ErrorResponse;
   if (!response.ok) {
-    const message = typeof body === 'object' && body !== null && 'error' in body ? String(body.error) : `通信に失敗しました (${response.status})`;
+    const message =
+      typeof body === 'object' && body !== null && 'error' in body
+        ? String(body.error)
+        : `通信に失敗しました (${response.status})`;
     throw new Error(message);
   }
   return body as T;
@@ -49,7 +52,10 @@ export async function parseTask(text: string): Promise<TaskDraft> {
   });
 }
 
-export async function updateTask(id: number, input: TaskUpdateInput): Promise<Task> {
+export async function updateTask(
+  id: number,
+  input: TaskUpdateInput,
+): Promise<Task> {
   const response = await request<{ task: Task }>(`/api/tasks/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
@@ -66,5 +72,7 @@ export async function fetchConnections(): Promise<ConnectionsResponse> {
 }
 
 export async function removeConnection(id: string): Promise<void> {
-  await request<{ ok: true }>(`/api/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  await request<{ ok: true }>(`/api/connections/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 }

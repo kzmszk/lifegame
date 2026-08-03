@@ -1,11 +1,23 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { GrantSummary } from '@cloudflare/workers-oauth-provider';
-import { createTask, deleteTask, getTask, listTasks, updateTask, type TaskView } from '../db/tasks';
+import {
+  createTask,
+  deleteTask,
+  getTask,
+  listTasks,
+  updateTask,
+  type TaskView,
+} from '../db/tasks';
 import { parse } from '../lib/parse';
 import { getAccessUser, isAccessAuthError } from '../lib/access';
 import { tokyoDayBounds } from '../lib/time';
-import { fieldsFromBody, parseId, parseStatus, validateFields } from '../lib/task-validation';
+import {
+  fieldsFromBody,
+  parseId,
+  parseStatus,
+  validateFields,
+} from '../lib/task-validation';
 import { markGrantRevoked, revokedGrantIds } from '../lib/revocation';
 import type {
   Connection,
@@ -20,7 +32,11 @@ const MAX_CONNECTION_LIST_PAGES = 5;
 const CONNECTION_LIST_PAGE_SIZE = 100;
 const MAX_GRANT_ID_LENGTH = 256;
 
-function error(c: Context<{ Bindings: Env }>, message: string, status: 400 | 401 | 403 | 404 | 405 | 500) {
+function error(
+  c: Context<{ Bindings: Env }>,
+  message: string,
+  status: 400 | 401 | 403 | 404 | 405 | 500,
+) {
   return c.json<ErrorResponse>({ error: message }, status);
 }
 
@@ -28,7 +44,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function readBody(c: Context<{ Bindings: Env }>): Promise<Record<string, unknown> | null> {
+async function readBody(
+  c: Context<{ Bindings: Env }>,
+): Promise<Record<string, unknown> | null> {
   try {
     const body: unknown = await c.req.json();
     return isRecord(body) ? body : null;
@@ -53,7 +71,13 @@ api.get('/tasks', async (c) => {
     return error(c, 'view は today, inbox, all のいずれかです', 400);
   }
   const bounds = tokyoDayBounds();
-  const tasks = await listTasks(c.env.DB, viewParam as TaskView, bounds.today, bounds.startUtc, bounds.nextStartUtc);
+  const tasks = await listTasks(
+    c.env.DB,
+    viewParam as TaskView,
+    bounds.today,
+    bounds.startUtc,
+    bounds.nextStartUtc,
+  );
   return c.json({ tasks });
 });
 
@@ -70,7 +94,8 @@ api.get('/tasks/:id', async (c) => {
 
 api.post('/tasks/parse', async (c) => {
   const body = await readBody(c);
-  if (!body || typeof body.text !== 'string' || body.text.trim() === '') return error(c, 'text は必須です', 400);
+  if (!body || typeof body.text !== 'string' || body.text.trim() === '')
+    return error(c, 'text は必須です', 400);
   const draft: TaskDraft = parse(body.text);
   return c.json(draft);
 });
@@ -94,12 +119,16 @@ api.post('/tasks', async (c) => {
     input = {
       ...draft,
       note: typeof body.note === 'string' ? body.note : draft.note,
-      priority: body.priority === undefined ? draft.priority : (body.priority as number),
+      priority:
+        body.priority === undefined
+          ? draft.priority
+          : (body.priority as number),
       tags: typeof body.tags === 'string' ? body.tags : draft.tags,
       status: parseStatus(body.status),
     };
   } else {
-    if (typeof body.title !== 'string' || body.title.trim() === '') return error(c, 'title は必須です', 400);
+    if (typeof body.title !== 'string' || body.title.trim() === '')
+      return error(c, 'title は必須です', 400);
     input = {
       title: body.title.trim(),
       note: (body.note as string | undefined) ?? '',
@@ -110,7 +139,11 @@ api.post('/tasks', async (c) => {
       status: parseStatus(body.status),
     };
   }
-  const task = await createTask(c.env.DB, input as Required<Pick<TaskCreateInput, 'title'>> & Omit<TaskCreateInput, 'title'>);
+  const task = await createTask(
+    c.env.DB,
+    input as Required<Pick<TaskCreateInput, 'title'>> &
+      Omit<TaskCreateInput, 'title'>,
+  );
   return c.json({ task }, 201);
 });
 
@@ -137,13 +170,20 @@ api.delete('/tasks/:id', async (c) => {
   const id = parseId(c.req.param('id'));
   if (!id) return error(c, 'タスクIDが不正です', 400);
   const deleted = await deleteTask(c.env.DB, id);
-  return deleted ? c.json({ ok: true }) : error(c, 'タスクが見つかりません', 404);
+  return deleted
+    ? c.json({ ok: true })
+    : error(c, 'タスクが見つかりません', 404);
 });
 
 function clientNameForGrant(grant: GrantSummary): string {
-  if (typeof grant.metadata === 'object' && grant.metadata !== null && !Array.isArray(grant.metadata)) {
+  if (
+    typeof grant.metadata === 'object' &&
+    grant.metadata !== null &&
+    !Array.isArray(grant.metadata)
+  ) {
     const clientName = (grant.metadata as Record<string, unknown>).clientName;
-    if (typeof clientName === 'string' && clientName.trim() !== '') return clientName;
+    if (typeof clientName === 'string' && clientName.trim() !== '')
+      return clientName;
   }
   return grant.clientId;
 }
@@ -171,7 +211,8 @@ async function scanConnectionGrants(
       ...(cursor ? { cursor } : {}),
     });
     grants.push(...result.items);
-    if (stopWhen && result.items.some(stopWhen)) return { grants, truncated: false };
+    if (stopWhen && result.items.some(stopWhen))
+      return { grants, truncated: false };
     if (!result.cursor) return { grants, truncated: false };
     cursor = result.cursor;
   }
@@ -192,20 +233,26 @@ function toConnection(grant: GrantSummary): Connection {
 }
 
 function isValidGrantId(grantId: string): boolean {
-  return grantId.length > 0
-    && grantId.length <= MAX_GRANT_ID_LENGTH
-    && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(grantId);
+  return (
+    grantId.length > 0 &&
+    grantId.length <= MAX_GRANT_ID_LENGTH &&
+    // Control characters are deliberately rejected at this trust boundary.
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(grantId)
+  );
 }
 
 api.get('/connections', async (c) => {
   const accessUser = getAccessUser(c.env, c.req.raw);
-  if (isAccessAuthError(accessUser)) return error(c, accessUser.message, accessUser.status);
+  if (isAccessAuthError(accessUser))
+    return error(c, accessUser.message, accessUser.status);
 
   const [scan, revoked] = await Promise.all([
     scanConnectionGrants(c.env, accessUser.email),
     revokedGrantIds(c.env.DB, accessUser.email),
   ]);
-  if (scan.truncated) console.warn('接続一覧を打ち切りました（ページ上限に到達）');
+  if (scan.truncated)
+    console.warn('接続一覧を打ち切りました（ページ上限に到達）');
   // A refresh that wrote back after the sweeps leaves a grant the tools already
   // refuse. Listing it would show a connection the user was told was disconnected.
   const connections = scan.grants
@@ -222,11 +269,16 @@ async function revokeConnection(c: Context<{ Bindings: Env }>) {
   if (!isValidGrantId(grantId)) return error(c, '接続IDが不正です', 400);
 
   const accessUser = getAccessUser(c.env, c.req.raw);
-  if (isAccessAuthError(accessUser)) return error(c, accessUser.message, accessUser.status);
+  if (isAccessAuthError(accessUser))
+    return error(c, accessUser.message, accessUser.status);
 
   // revokeGrant() is idempotent, so ownership is confirmed first to tell a missing
   // grant from a revoked one. The scan stops at the match instead of reading every page.
-  const scan = await scanConnectionGrants(c.env, accessUser.email, (grant) => grant.id === grantId);
+  const scan = await scanConnectionGrants(
+    c.env,
+    accessUser.email,
+    (grant) => grant.id === grantId,
+  );
   if (!scan.grants.some((grant) => grant.id === grantId)) {
     // A truncated scan cannot prove absence; saying "not found" here would be a lie.
     return scan.truncated
@@ -251,11 +303,13 @@ api.delete('/connections/:id', revokeConnection);
 api.delete('/connections/', revokeConnection);
 
 function knownApiPath(path: string): boolean {
-  return path === '/tasks'
-    || path === '/tasks/parse'
-    || path === '/connections'
-    || path === '/connections/'
-    || /^\/(tasks|connections)\/[^/]+$/.test(path);
+  return (
+    path === '/tasks' ||
+    path === '/tasks/parse' ||
+    path === '/connections' ||
+    path === '/connections/' ||
+    /^\/(tasks|connections)\/[^/]+$/.test(path)
+  );
 }
 
 // This route is copied to the parent app by app.route(), so unknown /api/* requests

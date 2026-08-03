@@ -35,11 +35,15 @@ describe('parse', () => {
   });
 
   it('validates month/day in the year after rollover', () => {
-    expect(parse('2月29日にうるう年の予定', new Date('2023-03-01T10:00:00+09:00'))).toMatchObject({
+    expect(
+      parse('2月29日にうるう年の予定', new Date('2023-03-01T10:00:00+09:00')),
+    ).toMatchObject({
       title: 'うるう年の予定',
       due_date: '2024-02-29',
     });
-    expect(parse('2月29日に予定', new Date('2024-03-01T10:00:00+09:00'))).toMatchObject({
+    expect(
+      parse('2月29日に予定', new Date('2024-03-01T10:00:00+09:00')),
+    ).toMatchObject({
       title: '2月29日に予定',
       due_date: null,
     });

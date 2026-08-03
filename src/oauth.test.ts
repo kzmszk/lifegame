@@ -1,4 +1,7 @@
-import type { AuthRequest, ClientInfo } from '@cloudflare/workers-oauth-provider';
+import type {
+  AuthRequest,
+  ClientInfo,
+} from '@cloudflare/workers-oauth-provider';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CSP_REPORT_PATH,
@@ -18,7 +21,9 @@ const client = (overrides: Partial<ClientInfo> = {}): ClientInfo => ({
   ...overrides,
 });
 
-const authorizationRequest = (overrides: Partial<AuthRequest> = {}): AuthRequest => ({
+const authorizationRequest = (
+  overrides: Partial<AuthRequest> = {},
+): AuthRequest => ({
   responseType: 'code',
   clientId: 'client-1',
   redirectUri: 'https://client.example/callback',
@@ -36,22 +41,37 @@ describe('OAuth authorization policy', () => {
     [{ codeChallengeMethod: 'plain' }, 'invalid_request'],
     [{ responseType: '' }, 'unsupported_response_type'],
     [{ responseType: 'token' }, 'unsupported_response_type'],
-  ])('rejects unsafe or unsupported authorization requests', (overrides, error) => {
-    expect(validateAuthorizationRequest(authorizationRequest(overrides), client())?.error).toBe(error);
-  });
+  ])(
+    'rejects unsafe or unsupported authorization requests',
+    (overrides, error) => {
+      expect(
+        validateAuthorizationRequest(authorizationRequest(overrides), client())
+          ?.error,
+      ).toBe(error);
+    },
+  );
 
   it('rejects clients whose registered response or grant types do not match', () => {
     expect(
-      validateAuthorizationRequest(authorizationRequest(), client({ responseTypes: ['token'] }))?.error,
+      validateAuthorizationRequest(
+        authorizationRequest(),
+        client({ responseTypes: ['token'] }),
+      )?.error,
     ).toBe('unauthorized_client');
     expect(
-      validateAuthorizationRequest(authorizationRequest(), client({ grantTypes: ['refresh_token'] }))?.error,
+      validateAuthorizationRequest(
+        authorizationRequest(),
+        client({ grantTypes: ['refresh_token'] }),
+      )?.error,
     ).toBe('unauthorized_client');
   });
 
   it('rejects unknown scopes and defaults omitted scope to both task scopes', () => {
     expect(
-      validateAuthorizationRequest(authorizationRequest({ scope: ['tasks:admin'] }), client())?.error,
+      validateAuthorizationRequest(
+        authorizationRequest({ scope: ['tasks:admin'] }),
+        client(),
+      )?.error,
     ).toBe('invalid_scope');
     expect(grantedScopesForRequest([])).toEqual(['tasks:read', 'tasks:write']);
     expect(grantedScopesForRequest(['tasks:read'])).toEqual(['tasks:read']);
@@ -75,16 +95,24 @@ describe('DCR metadata policy', () => {
   });
 
   it('rejects oversized strings and arrays', () => {
-    expect(validateClientRegistrationMetadata({ client_name: 'x'.repeat(2049) })?.code).toBe(
-      'invalid_client_metadata',
-    );
-    expect(validateClientRegistrationMetadata({ redirect_uris: Array.from({ length: 17 }, () => 'https://client.example') })?.code).toBe(
-      'invalid_client_metadata',
-    );
+    expect(
+      validateClientRegistrationMetadata({ client_name: 'x'.repeat(2049) })
+        ?.code,
+    ).toBe('invalid_client_metadata');
+    expect(
+      validateClientRegistrationMetadata({
+        redirect_uris: Array.from(
+          { length: 17 },
+          () => 'https://client.example',
+        ),
+      })?.code,
+    ).toBe('invalid_client_metadata');
   });
 
   it('rejects objects that exceed the key-length limit', () => {
-    expect(validateClientRegistrationMetadata({ ['k'.repeat(129)]: 'value' })).toEqual({
+    expect(
+      validateClientRegistrationMetadata({ ['k'.repeat(129)]: 'value' }),
+    ).toEqual({
       code: 'invalid_client_metadata',
       description: 'metadata has a key that is too long',
     });
@@ -92,7 +120,10 @@ describe('DCR metadata policy', () => {
 
   it('rejects many small values that exceed the aggregate byte budget', () => {
     const metadata = Object.fromEntries(
-      Array.from({ length: 32 }, (_, index) => [`field_${index}`, 'x'.repeat(600)]),
+      Array.from({ length: 32 }, (_, index) => [
+        `field_${index}`,
+        'x'.repeat(600),
+      ]),
     );
 
     expect(validateClientRegistrationMetadata(metadata)?.description).toContain(
@@ -107,13 +138,17 @@ describe('DCR metadata policy', () => {
       ),
     };
 
-    expect(validateClientRegistrationMetadata(metadata)?.description).toBe('metadata has more than 512 nodes');
+    expect(validateClientRegistrationMetadata(metadata)?.description).toBe(
+      'metadata has more than 512 nodes',
+    );
   });
 
   it('still rejects oversized objects and deeply nested values', () => {
     expect(
       validateClientRegistrationMetadata(
-        Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`field_${index}`, 'value'])),
+        Object.fromEntries(
+          Array.from({ length: 33 }, (_, index) => [`field_${index}`, 'value']),
+        ),
       )?.code,
     ).toBe('invalid_client_metadata');
     expect(
@@ -125,63 +160,91 @@ describe('DCR metadata policy', () => {
 });
 
 describe('OAuth consent CSRF protection', () => {
-  const makeEnv = (completed: { count: number }) => ({
-    AUTH_REQUIRED: 'false',
-    OAUTH_PROVIDER: {
-      lookupClient: async () => client(),
-      parseAuthRequest: async () => authorizationRequest(),
-      completeAuthorization: async () => {
-        completed.count += 1;
-        return { redirectTo: 'https://client.example/callback?code=code-1' };
+  const makeEnv = (completed: { count: number }) =>
+    ({
+      AUTH_REQUIRED: 'false',
+      OAUTH_PROVIDER: {
+        lookupClient: async () => client(),
+        parseAuthRequest: async () => authorizationRequest(),
+        completeAuthorization: async () => {
+          completed.count += 1;
+          return { redirectTo: 'https://client.example/callback?code=code-1' };
+        },
       },
-    },
-  }) as unknown as Env;
+    }) as unknown as Env;
 
   const fetchAuthorize = (request: Request, env: Env) =>
     defaultHandler.fetch!(
-      request as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
+      request as unknown as Parameters<
+        NonNullable<typeof defaultHandler.fetch>
+      >[0],
       env,
       {} as ExecutionContext,
     );
 
   it('allows the approved callback origin in form-action so the OAuth redirect is not blocked', async () => {
     const env = makeEnv({ count: 0 });
-    const page = await fetchAuthorize(new Request('https://lifegame.example/authorize'), env);
+    const page = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize'),
+      env,
+    );
     const csp = page.headers.get('Content-Security-Policy') ?? '';
 
     // form-action also applies to the redirect that follows the submission.
     expect(csp).toContain("form-action 'self' https://client.example;");
     expect(csp).toContain("frame-ancestors 'none'");
-    expect(await page.text()).toContain("form-action &#39;self&#39; https://client.example;");
+    expect(await page.text()).toContain(
+      'form-action &#39;self&#39; https://client.example;',
+    );
   });
 
   it('allows a custom-scheme callback by scheme in form-action', async () => {
     const env = makeEnv({ count: 0 });
-    (env as unknown as { OAUTH_PROVIDER: { parseAuthRequest: () => Promise<AuthRequest> } }).OAUTH_PROVIDER.parseAuthRequest =
-      async () => authorizationRequest({ redirectUri: 'myapp://callback' });
-    const page = await fetchAuthorize(new Request('https://lifegame.example/authorize'), env);
+    (
+      env as unknown as {
+        OAUTH_PROVIDER: { parseAuthRequest: () => Promise<AuthRequest> };
+      }
+    ).OAUTH_PROVIDER.parseAuthRequest = async () =>
+      authorizationRequest({ redirectUri: 'myapp://callback' });
+    const page = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize'),
+      env,
+    );
 
-    expect(page.headers.get('Content-Security-Policy')).toContain("form-action 'self' myapp:;");
+    expect(page.headers.get('Content-Security-Policy')).toContain(
+      "form-action 'self' myapp:;",
+    );
   });
 
   it('keeps concurrent consent flows valid when both GETs see the same cookie state', async () => {
     const completed = { count: 0 };
     const env = makeEnv(completed);
-    const priorCookie = '__Host-lifegame-consent-csrf=00000000-0000-4000-8000-000000000000';
+    const priorCookie =
+      '__Host-lifegame-consent-csrf=00000000-0000-4000-8000-000000000000';
     const firstPage = await fetchAuthorize(
-      new Request('https://lifegame.example/authorize', { headers: { Cookie: priorCookie } }),
+      new Request('https://lifegame.example/authorize', {
+        headers: { Cookie: priorCookie },
+      }),
       env,
     );
     const secondPage = await fetchAuthorize(
-      new Request('https://lifegame.example/authorize', { headers: { Cookie: priorCookie } }),
+      new Request('https://lifegame.example/authorize', {
+        headers: { Cookie: priorCookie },
+      }),
       env,
     );
     const firstHtml = await firstPage.text();
     const secondHtml = await secondPage.text();
     const firstFlowId = firstHtml.match(/name="flow_id" value="([^"]+)"/)?.[1];
-    const secondFlowId = secondHtml.match(/name="flow_id" value="([^"]+)"/)?.[1];
-    const firstToken = firstHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1];
-    const secondToken = secondHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1];
+    const secondFlowId = secondHtml.match(
+      /name="flow_id" value="([^"]+)"/,
+    )?.[1];
+    const firstToken = firstHtml.match(
+      /name="csrf_token" value="([^"]+)"/,
+    )?.[1];
+    const secondToken = secondHtml.match(
+      /name="csrf_token" value="([^"]+)"/,
+    )?.[1];
     const firstCookie = firstPage.headers.get('Set-Cookie');
     const secondCookie = secondPage.headers.get('Set-Cookie');
     expect(firstFlowId).toBeTruthy();
@@ -190,8 +253,12 @@ describe('OAuth consent CSRF protection', () => {
     expect(firstToken).toBeTruthy();
     expect(secondToken).toBeTruthy();
     expect(firstToken).not.toBe(secondToken);
-    expect(firstCookie).toContain(`__Host-lifegame-consent-${firstFlowId}=${firstToken}`);
-    expect(secondCookie).toContain(`__Host-lifegame-consent-${secondFlowId}=${secondToken}`);
+    expect(firstCookie).toContain(
+      `__Host-lifegame-consent-${firstFlowId}=${firstToken}`,
+    );
+    expect(secondCookie).toContain(
+      `__Host-lifegame-consent-${secondFlowId}=${secondToken}`,
+    );
     expect(firstCookie).toContain('Secure');
     expect(firstCookie).toContain('HttpOnly');
     expect(firstCookie).toContain('SameSite=Lax');
@@ -208,7 +275,8 @@ describe('OAuth consent CSRF protection', () => {
       if (setCookie.includes('Max-Age=0')) cookieJar.delete(name);
       else cookieJar.set(name, value);
     };
-    const cookieHeader = () => [...cookieJar].map(([name, value]) => `${name}=${value}`).join('; ');
+    const cookieHeader = () =>
+      [...cookieJar].map(([name, value]) => `${name}=${value}`).join('; ');
     applySetCookie(`${priorCookie}; Path=/`);
     applySetCookie(firstCookie);
     applySetCookie(secondCookie);
@@ -216,20 +284,30 @@ describe('OAuth consent CSRF protection', () => {
     const firstPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
-        headers: { Cookie: cookieHeader(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          Cookie: cookieHeader(),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: `decision=approve&flow_id=${encodeURIComponent(firstFlowId ?? '')}&csrf_token=${encodeURIComponent(firstToken ?? '')}`,
       }),
       env,
     );
     expect(firstPost.status).toBe(302);
-    expect(firstPost.headers.get('Set-Cookie')).toContain(`__Host-lifegame-consent-${firstFlowId}=;`);
-    expect(firstPost.headers.get('Set-Cookie')).not.toContain(`__Host-lifegame-consent-${secondFlowId}=;`);
+    expect(firstPost.headers.get('Set-Cookie')).toContain(
+      `__Host-lifegame-consent-${firstFlowId}=;`,
+    );
+    expect(firstPost.headers.get('Set-Cookie')).not.toContain(
+      `__Host-lifegame-consent-${secondFlowId}=;`,
+    );
     applySetCookie(firstPost.headers.get('Set-Cookie'));
 
     const secondPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
-        headers: { Cookie: cookieHeader(), 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          Cookie: cookieHeader(),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: `decision=approve&flow_id=${encodeURIComponent(secondFlowId ?? '')}&csrf_token=${encodeURIComponent(secondToken ?? '')}`,
       }),
       env,
@@ -242,38 +320,59 @@ describe('OAuth consent CSRF protection', () => {
   it('supports sequential flows and rejects absent, unknown, mismatched, and malformed submissions', async () => {
     const completed = { count: 0 };
     const env = makeEnv(completed);
-    const firstPage = await fetchAuthorize(new Request('https://lifegame.example/authorize'), env);
+    const firstPage = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize'),
+      env,
+    );
     const firstHtml = await firstPage.text();
-    const firstFlowId = firstHtml.match(/name="flow_id" value="([^"]+)"/)?.[1] ?? '';
-    const firstToken = firstHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
-    const firstCookie = firstPage.headers.get('Set-Cookie')?.split(';', 1)[0] ?? '';
+    const firstFlowId =
+      firstHtml.match(/name="flow_id" value="([^"]+)"/)?.[1] ?? '';
+    const firstToken =
+      firstHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    const firstCookie =
+      firstPage.headers.get('Set-Cookie')?.split(';', 1)[0] ?? '';
 
     const secondPage = await fetchAuthorize(
-      new Request('https://lifegame.example/authorize', { headers: { Cookie: firstCookie } }),
+      new Request('https://lifegame.example/authorize', {
+        headers: { Cookie: firstCookie },
+      }),
       env,
     );
     const secondHtml = await secondPage.text();
-    const secondFlowId = secondHtml.match(/name="flow_id" value="([^"]+)"/)?.[1] ?? '';
-    const secondToken = secondHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
-    const secondCookie = secondPage.headers.get('Set-Cookie')?.split(';', 1)[0] ?? '';
+    const secondFlowId =
+      secondHtml.match(/name="flow_id" value="([^"]+)"/)?.[1] ?? '';
+    const secondToken =
+      secondHtml.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    const secondCookie =
+      secondPage.headers.get('Set-Cookie')?.split(';', 1)[0] ?? '';
     const bothCookies = `${firstCookie}; ${secondCookie}`;
 
     const firstPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
-        headers: { Cookie: bothCookies, 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          Cookie: bothCookies,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: `decision=approve&flow_id=${encodeURIComponent(firstFlowId)}&csrf_token=${encodeURIComponent(firstToken)}`,
       }),
       env,
     );
     expect(firstPost.status).toBe(302);
-    expect(firstPost.headers.get('Set-Cookie')).toContain(`__Host-lifegame-consent-${firstFlowId}=;`);
-    expect(firstPost.headers.get('Set-Cookie')).not.toContain(`__Host-lifegame-consent-${secondFlowId}=;`);
+    expect(firstPost.headers.get('Set-Cookie')).toContain(
+      `__Host-lifegame-consent-${firstFlowId}=;`,
+    );
+    expect(firstPost.headers.get('Set-Cookie')).not.toContain(
+      `__Host-lifegame-consent-${secondFlowId}=;`,
+    );
 
     const secondPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
-        headers: { Cookie: secondCookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          Cookie: secondCookie,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: `decision=approve&flow_id=${encodeURIComponent(secondFlowId)}&csrf_token=${encodeURIComponent(secondToken)}`,
       }),
       env,
@@ -284,7 +383,10 @@ describe('OAuth consent CSRF protection', () => {
     const unknownTokenPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
-        headers: { Cookie: secondCookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          Cookie: secondCookie,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: `decision=approve&flow_id=${encodeURIComponent(secondFlowId)}&csrf_token=00000000-0000-4000-8000-000000000000`,
       }),
       env,
@@ -295,13 +397,18 @@ describe('OAuth consent CSRF protection', () => {
     const mismatchedTokenPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
         method: 'POST',
-        headers: { Cookie: secondCookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          Cookie: secondCookie,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: `decision=approve&flow_id=${encodeURIComponent(secondFlowId)}&csrf_token=${encodeURIComponent(firstToken)}`,
       }),
       env,
     );
     expect(mismatchedTokenPost.status).toBe(400);
-    await expect(mismatchedTokenPost.text()).resolves.toBe('Invalid consent form');
+    await expect(mismatchedTokenPost.text()).resolves.toBe(
+      'Invalid consent form',
+    );
 
     const absentTokenPost = await fetchAuthorize(
       new Request('https://lifegame.example/authorize', {
@@ -323,12 +430,17 @@ describe('OAuth consent CSRF protection', () => {
       env,
     );
     expect(malformedFlowPost.status).toBe(400);
-    await expect(malformedFlowPost.text()).resolves.toBe('Invalid consent form');
+    await expect(malformedFlowPost.text()).resolves.toBe(
+      'Invalid consent form',
+    );
   });
 });
 
 describe('OAuth redirect validation', () => {
-  const fetchParseError = async (registeredUri: string, requestedUri: string) => {
+  const fetchParseError = async (
+    registeredUri: string,
+    requestedUri: string,
+  ) => {
     const env = {
       AUTH_REQUIRED: 'false',
       OAUTH_PROVIDER: {
@@ -345,21 +457,29 @@ describe('OAuth redirect validation', () => {
       state: 'state-1',
     });
     return defaultHandler.fetch!(
-      new Request(`https://lifegame.example/authorize?${params}`) as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
+      new Request(
+        `https://lifegame.example/authorize?${params}`,
+      ) as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
       env,
       {} as ExecutionContext,
     );
   };
 
   it('accepts a different port for bracketed IPv6 loopback callbacks', async () => {
-    const response = await fetchParseError('http://[::1]:5678/cb', 'http://[::1]:1234/cb');
+    const response = await fetchParseError(
+      'http://[::1]:5678/cb',
+      'http://[::1]:1234/cb',
+    );
     expect(response.status).toBe(302);
     expect(response.headers.get('Location')).toContain('http://[::1]:1234/cb');
     expect(response.headers.get('Location')).toContain('error=invalid_request');
   });
 
   it('requires exact matching for non-loopback callback hosts', async () => {
-    const response = await fetchParseError('https://client.example:5678/cb', 'https://client.example:1234/cb');
+    const response = await fetchParseError(
+      'https://client.example:5678/cb',
+      'https://client.example:1234/cb',
+    );
     expect(response.status).toBe(400);
   });
 });
@@ -367,7 +487,11 @@ describe('OAuth redirect validation', () => {
 // A browser only ever sees the emitted header, so this evaluator is deliberately
 // independent of the production CSP builder: a wrong policy must not be able to
 // validate itself by sharing the code that produced it.
-function formActionAllows(csp: string, pageUrl: string, target: string): boolean {
+function formActionAllows(
+  csp: string,
+  pageUrl: string,
+  target: string,
+): boolean {
   const directive = csp
     .split(';')
     .map((part) => part.trim())
@@ -376,9 +500,11 @@ function formActionAllows(csp: string, pageUrl: string, target: string): boolean
   const sources = directive.split(/\s+/).slice(1);
   const targetUrl = new URL(target);
   return sources.some((source) => {
-    if (source === "'self'") return targetUrl.origin === new URL(pageUrl).origin;
+    if (source === "'self'")
+      return targetUrl.origin === new URL(pageUrl).origin;
     if (source === '*') return true;
-    if (/^[a-z][a-z0-9+.-]*:$/i.test(source)) return targetUrl.protocol === source.toLowerCase();
+    if (/^[a-z][a-z0-9+.-]*:$/i.test(source))
+      return targetUrl.protocol === source.toLowerCase();
     try {
       return new URL(source).origin === targetUrl.origin;
     } catch {
@@ -395,23 +521,51 @@ describe('consent CSP permits the redirect it will issue', () => {
     OAUTH_PROVIDER: {
       lookupClient: async () => client(),
       parseAuthRequest: async () => authorizationRequest(),
-      completeAuthorization: async () => ({ redirectTo: 'https://client.example/callback?code=code-1' }),
+      completeAuthorization: async () => ({
+        redirectTo: 'https://client.example/callback?code=code-1',
+      }),
     },
   } as unknown as Env;
 
   const fetchAuthorize = (request: Request) =>
     defaultHandler.fetch!(
-      request as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
+      request as unknown as Parameters<
+        NonNullable<typeof defaultHandler.fetch>
+      >[0],
       env,
       {} as ExecutionContext,
     );
 
   it('rejects the pre-fix policy, proving the check has teeth', () => {
     // form-action 'self' alone is what silently blocked the OAuth redirect.
-    expect(formActionAllows("form-action 'self'", PAGE_URL, 'https://client.example/callback?code=1')).toBe(false);
-    expect(formActionAllows("form-action 'self' https://client.example", PAGE_URL, 'https://client.example/cb')).toBe(true);
-    expect(formActionAllows("form-action 'self' myapp:", PAGE_URL, 'myapp://cb?code=1')).toBe(true);
-    expect(formActionAllows("form-action 'self' https://other.example", PAGE_URL, 'https://client.example/cb')).toBe(false);
+    expect(
+      formActionAllows(
+        "form-action 'self'",
+        PAGE_URL,
+        'https://client.example/callback?code=1',
+      ),
+    ).toBe(false);
+    expect(
+      formActionAllows(
+        "form-action 'self' https://client.example",
+        PAGE_URL,
+        'https://client.example/cb',
+      ),
+    ).toBe(true);
+    expect(
+      formActionAllows(
+        "form-action 'self' myapp:",
+        PAGE_URL,
+        'myapp://cb?code=1',
+      ),
+    ).toBe(true);
+    expect(
+      formActionAllows(
+        "form-action 'self' https://other.example",
+        PAGE_URL,
+        'https://client.example/cb',
+      ),
+    ).toBe(false);
   });
 
   it('allows a browser to follow the Location returned by an approval', async () => {
@@ -425,7 +579,10 @@ describe('consent CSP permits the redirect it will issue', () => {
     const approval = await fetchAuthorize(
       new Request(PAGE_URL, {
         method: 'POST',
-        headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          Cookie: cookie,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
         body: `decision=approve&flow_id=${encodeURIComponent(flowId)}&csrf_token=${encodeURIComponent(token)}`,
       }),
     );
@@ -453,7 +610,9 @@ describe('consent CSP permits the redirect it will issue', () => {
 describe('CSP violation report endpoint', () => {
   const fetchReport = (request: Request) =>
     defaultHandler.fetch!(
-      request as unknown as Parameters<NonNullable<typeof defaultHandler.fetch>>[0],
+      request as unknown as Parameters<
+        NonNullable<typeof defaultHandler.fetch>
+      >[0],
       {} as Env,
       {} as ExecutionContext,
     );
@@ -464,11 +623,17 @@ describe('CSP violation report endpoint', () => {
   it('logs a report and answers 204', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const response = await fetchReport(
-      new Request(url, { method: 'POST', body: '{"csp-report":{"blocked-uri":"https://client.example/cb"}}' }),
+      new Request(url, {
+        method: 'POST',
+        body: '{"csp-report":{"blocked-uri":"https://client.example/cb"}}',
+      }),
     );
 
     expect(response.status).toBe(204);
-    expect(warn).toHaveBeenCalledWith('CSP violation report:', expect.stringContaining('blocked-uri'));
+    expect(warn).toHaveBeenCalledWith(
+      'CSP violation report:',
+      expect.stringContaining('blocked-uri'),
+    );
   });
 
   it('rejects an oversized report on its declared length, before touching the body', async () => {
@@ -491,7 +656,9 @@ describe('CSP violation report endpoint', () => {
   it('discards an oversized report that declares no length', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const response = await fetchReport(new Request(url, { method: 'POST', body: 'x'.repeat(9 * 1024) }));
+    const response = await fetchReport(
+      new Request(url, { method: 'POST', body: 'x'.repeat(9 * 1024) }),
+    );
 
     expect(response.status).toBe(204);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('discarded'));

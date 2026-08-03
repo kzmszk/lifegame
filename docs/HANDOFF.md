@@ -8,13 +8,13 @@ Phase 4 (MCP連携) を実装し、本番稼働させた時点の状態と、次
 Phase 4 のタスク分解のうち **1(MCPサーバー + OAuth)と 2(ツール一式)が完了し、本番で動作中**。
 Claude アプリから `lifegame.tachicoma.com/mcp` に接続してタスクの読み書きができる。
 
-| 項目 | 状態 |
-|------|------|
-| MCPサーバー `/mcp` | 稼働中(Streamable HTTP, `McpAgent` + Durable Object) |
-| OAuth (DCR, PKCE S256) | 稼働中。`workers-oauth-provider` が Worker のエントリポイント |
-| ツール5種 | `get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task` |
-| Cloudflare Access | 設定済み。`/authorize` は保護、OAuthプロトコル用パスはBypass |
-| ブリーフィングスキル | ファイルは `skills/morning-briefing/` にあるが **claude.ai に未登録** |
+| 項目                   | 状態                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| MCPサーバー `/mcp`     | 稼働中(Streamable HTTP, `McpAgent` + Durable Object)                               |
+| OAuth (DCR, PKCE S256) | 稼働中。`workers-oauth-provider` が Worker のエントリポイント                      |
+| ツール5種              | `get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task` |
+| Cloudflare Access      | 設定済み。`/authorize` は保護、OAuthプロトコル用パスはBypass                       |
+| ブリーフィングスキル   | ファイルは `skills/morning-briefing/` にあるが **claude.ai に未登録**              |
 
 テストは 51 件。`npm test` / `npm run typecheck` / `npm run build` が通ることを常に確認してからデプロイする。
 

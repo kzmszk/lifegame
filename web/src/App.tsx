@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import type { Connection, Task, TaskDraft, TaskStatus, TaskView } from '../../src/shared/types';
-import { createTask, fetchConnections, fetchTask, fetchTasks, parseTask, removeConnection, removeTask, updateTask } from './api';
+import type {
+  Connection,
+  Task,
+  TaskDraft,
+  TaskStatus,
+  TaskView,
+} from '../../src/shared/types';
+import {
+  createTask,
+  fetchConnections,
+  fetchTask,
+  fetchTasks,
+  parseTask,
+  removeConnection,
+  removeTask,
+  updateTask,
+} from './api';
 
 type Route =
   | { kind: 'list'; view: TaskView }
@@ -17,7 +32,11 @@ function routeForPath(pathWithSearch: string): Route {
   const detail = pathname.match(/^\/tasks\/(\d+)$/);
   if (detail) {
     const from = new URLSearchParams(search).get('from');
-    return { kind: 'detail', id: Number(detail[1]), from: isTaskView(from) ? from : 'today' };
+    return {
+      kind: 'detail',
+      id: Number(detail[1]),
+      from: isTaskView(from) ? from : 'today',
+    };
   }
   if (pathname === '/settings') return { kind: 'settings' };
   if (pathname === '/inbox') return { kind: 'list', view: 'inbox' };
@@ -50,21 +69,27 @@ const viewTitles: Record<TaskView, string> = {
 };
 
 export default function App() {
-  const [path, setPath] = useState(window.location.pathname + window.location.search);
+  const [path, setPath] = useState(
+    window.location.pathname + window.location.search,
+  );
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, showToast] = useToast();
   const [draft, setDraft] = useState<TaskDraft | null>(null);
   const route = routeForPath(path);
+  const listView = route.kind === 'list' ? route.view : null;
   const routeRef = useRef<Route>(route);
   routeRef.current = route;
   const listRequestGeneration = useRef(0);
   const updatingTaskIdsRef = useRef(new Set<number>());
-  const [updatingTaskIds, setUpdatingTaskIds] = useState<Set<number>>(new Set());
+  const [updatingTaskIds, setUpdatingTaskIds] = useState<Set<number>>(
+    new Set(),
+  );
 
   useEffect(() => {
-    const onPopState = () => setPath(window.location.pathname + window.location.search);
+    const onPopState = () =>
+      setPath(window.location.pathname + window.location.search);
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
@@ -81,15 +106,17 @@ export default function App() {
       setTasks(nextTasks);
     } catch (error) {
       if (generation !== listRequestGeneration.current) return;
-      setLoadError(error instanceof Error ? error.message : 'タスクの取得に失敗しました');
+      setLoadError(
+        error instanceof Error ? error.message : 'タスクの取得に失敗しました',
+      );
     } finally {
       if (generation === listRequestGeneration.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (route.kind === 'list') void loadList(route.view);
-  }, [loadList, route.kind, route.kind === 'list' ? route.view : null]);
+    if (listView !== null) void loadList(listView);
+  }, [listView, loadList]);
 
   const handleCreate = useCallback(
     async (text: string) => {
@@ -101,13 +128,10 @@ export default function App() {
     [loadList, showToast],
   );
 
-  const handleVoice = useCallback(
-    async (text: string) => {
-      const draft = await parseTask(text);
-      setDraft(draft);
-    },
-    [],
-  );
+  const handleVoice = useCallback(async (text: string) => {
+    const draft = await parseTask(text);
+    setDraft(draft);
+  }, []);
 
   const handleToggle = useCallback(
     async (task: Task) => {
@@ -115,14 +139,22 @@ export default function App() {
       updatingTaskIdsRef.current.add(task.id);
       setUpdatingTaskIds(new Set(updatingTaskIdsRef.current));
       const nextStatus: TaskStatus = task.status === 'done' ? 'open' : 'done';
-      setTasks((current) => current.map((item) => (item.id === task.id ? { ...item, status: nextStatus } : item)));
+      setTasks((current) =>
+        current.map((item) =>
+          item.id === task.id ? { ...item, status: nextStatus } : item,
+        ),
+      );
       try {
         await updateTask(task.id, { status: nextStatus });
         const currentRoute = routeRef.current;
         if (currentRoute.kind === 'list') await loadList(currentRoute.view);
       } catch (error) {
-        setTasks((current) => current.map((item) => (item.id === task.id ? task : item)));
-        showToast(error instanceof Error ? error.message : '更新に失敗しました');
+        setTasks((current) =>
+          current.map((item) => (item.id === task.id ? task : item)),
+        );
+        showToast(
+          error instanceof Error ? error.message : '更新に失敗しました',
+        );
       } finally {
         updatingTaskIdsRef.current.delete(task.id);
         setUpdatingTaskIds(new Set(updatingTaskIdsRef.current));
@@ -131,17 +163,22 @@ export default function App() {
     [loadList, showToast],
   );
 
-  const confirmDraft = useCallback(async (nextDraft: TaskDraft) => {
-    try {
-      await createTask(nextDraft);
-      setDraft(null);
-      const currentRoute = routeRef.current;
-      if (currentRoute.kind === 'list') await loadList(currentRoute.view);
-      showToast('タスクを追加しました');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'タスクの追加に失敗しました');
-    }
-  }, [loadList, showToast]);
+  const confirmDraft = useCallback(
+    async (nextDraft: TaskDraft) => {
+      try {
+        await createTask(nextDraft);
+        setDraft(null);
+        const currentRoute = routeRef.current;
+        if (currentRoute.kind === 'list') await loadList(currentRoute.view);
+        showToast('タスクを追加しました');
+      } catch (error) {
+        showToast(
+          error instanceof Error ? error.message : 'タスクの追加に失敗しました',
+        );
+      }
+    },
+    [loadList, showToast],
+  );
 
   return (
     <div className="app-shell">
@@ -153,10 +190,28 @@ export default function App() {
                 <p className="eyebrow">LIFE GAME</p>
                 <h1>{viewTitles[route.view]}</h1>
               </div>
-              <button className="header-mark" type="button" onClick={() => navigate('/settings')} aria-label="設定を開く">●</button>
+              <button
+                className="header-mark"
+                type="button"
+                onClick={() => navigate('/settings')}
+                aria-label="設定を開く"
+              >
+                ●
+              </button>
             </header>
-            <QuickAdd onAdd={handleCreate} onVoiceText={handleVoice} onError={showToast} />
-            {loading ? <Loading /> : loadError ? <ErrorState message={loadError} onRetry={() => void loadList(route.view)} /> : (
+            <QuickAdd
+              onAdd={handleCreate}
+              onVoiceText={handleVoice}
+              onError={showToast}
+            />
+            {loading ? (
+              <Loading />
+            ) : loadError ? (
+              <ErrorState
+                message={loadError}
+                onRetry={() => void loadList(route.view)}
+              />
+            ) : (
               <TaskList
                 tasks={tasks}
                 view={route.view}
@@ -174,22 +229,53 @@ export default function App() {
             onError={showToast}
           />
         ) : (
-          <ConnectionSettings onBack={() => navigate('/')} onError={showToast} />
+          <ConnectionSettings
+            onBack={() => navigate('/')}
+            onError={showToast}
+          />
         )}
       </main>
       {route.kind === 'list' && <BottomTabs view={route.view} />}
-      {draft && <DraftDialog draft={draft} onCancel={() => setDraft(null)} onConfirm={confirmDraft} />}
-      {toast && <div className="toast" role="status">{toast}</div>}
+      {draft && (
+        <DraftDialog
+          draft={draft}
+          onCancel={() => setDraft(null)}
+          onConfirm={confirmDraft}
+        />
+      )}
+      {toast && (
+        <div className="toast" role="status">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
 
 function Loading() {
-  return <div className="loading"><span className="spinner" />読み込み中…</div>;
+  return (
+    <div className="loading">
+      <span className="spinner" />
+      読み込み中…
+    </div>
+  );
 }
 
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return <div className="empty-state error-state"><p>{message}</p><button className="button secondary" onClick={onRetry}>再読み込み</button></div>;
+function ErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="empty-state error-state">
+      <p>{message}</p>
+      <button className="button secondary" onClick={onRetry}>
+        再読み込み
+      </button>
+    </div>
+  );
 }
 
 function QuickAdd({
@@ -214,14 +300,17 @@ function QuickAdd({
       await onAdd(text.trim());
       setText('');
     } catch (error) {
-      onError(error instanceof Error ? error.message : 'タスクの追加に失敗しました');
+      onError(
+        error instanceof Error ? error.message : 'タスクの追加に失敗しました',
+      );
     } finally {
       setSaving(false);
     }
   };
 
   const startVoice = () => {
-    const SpeechRecognitionCtor = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    const SpeechRecognitionCtor =
+      window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
       onError('このブラウザは音声入力に対応していません');
       return;
@@ -235,7 +324,11 @@ function QuickAdd({
       setListening(false);
       if (transcript) {
         setText('');
-        void onVoiceText(transcript).catch((error) => onError(error instanceof Error ? error.message : '音声の解析に失敗しました'));
+        void onVoiceText(transcript).catch((error) =>
+          onError(
+            error instanceof Error ? error.message : '音声の解析に失敗しました',
+          ),
+        );
       }
     };
     recognition.onerror = () => {
@@ -250,9 +343,26 @@ function QuickAdd({
 
   return (
     <form className="quick-add" onSubmit={submit}>
-      <button className="plus" type="submit" disabled={!text.trim() || saving} aria-label="このタスクを追加">＋</button>
-      <input value={text} onChange={(event) => setText(event.target.value)} placeholder="タスクを追加…" aria-label="タスクを追加" />
-      <button className={`voice-button ${listening ? 'is-listening' : ''}`} type="button" onClick={startVoice} aria-label="音声入力">
+      <button
+        className="plus"
+        type="submit"
+        disabled={!text.trim() || saving}
+        aria-label="このタスクを追加"
+      >
+        ＋
+      </button>
+      <input
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder="タスクを追加…"
+        aria-label="タスクを追加"
+      />
+      <button
+        className={`voice-button ${listening ? 'is-listening' : ''}`}
+        type="button"
+        onClick={startVoice}
+        aria-label="音声入力"
+      >
         {listening ? '◉' : '🎤'}
       </button>
       {saving && <span className="mini-spinner" aria-label="保存中" />}
@@ -274,28 +384,76 @@ function TaskList({
   onOpen: (id: number) => void;
 }) {
   if (tasks.length === 0) {
-    return <div className="empty-state"><div className="empty-icon">☼</div><p>{view === 'inbox' ? 'Inbox は空です' : 'タスクはありません'}</p><small>上の入力欄から、次の一手を追加しましょう。</small></div>;
+    return (
+      <div className="empty-state">
+        <div className="empty-icon">☼</div>
+        <p>{view === 'inbox' ? 'Inbox は空です' : 'タスクはありません'}</p>
+        <small>上の入力欄から、次の一手を追加しましょう。</small>
+      </div>
+    );
   }
-  return <section className="task-list" aria-label="タスク一覧">{tasks.map((task) => <TaskCard key={task.id} task={task} updating={updatingTaskIds.has(task.id)} onToggle={onToggle} onOpen={onOpen} />)}</section>;
+  return (
+    <section className="task-list" aria-label="タスク一覧">
+      {tasks.map((task) => (
+        <TaskCard
+          key={task.id}
+          task={task}
+          updating={updatingTaskIds.has(task.id)}
+          onToggle={onToggle}
+          onOpen={onOpen}
+        />
+      ))}
+    </section>
+  );
 }
 
-function TaskCard({ task, updating, onToggle, onOpen }: { task: Task; updating: boolean; onToggle: (task: Task) => Promise<void>; onOpen: (id: number) => void }) {
+function TaskCard({
+  task,
+  updating,
+  onToggle,
+  onOpen,
+}: {
+  task: Task;
+  updating: boolean;
+  onToggle: (task: Task) => Promise<void>;
+  onOpen: (id: number) => void;
+}) {
   return (
     <article className={`task-card ${task.status === 'done' ? 'is-done' : ''}`}>
-      <button className="check-button" disabled={updating} aria-busy={updating} onClick={() => void onToggle(task)} aria-label={task.status === 'done' ? '未完了に戻す' : '完了にする'}>
+      <button
+        className="check-button"
+        disabled={updating}
+        aria-busy={updating}
+        onClick={() => void onToggle(task)}
+        aria-label={task.status === 'done' ? '未完了に戻す' : '完了にする'}
+      >
         {task.status === 'done' ? '✓' : ''}
       </button>
       <button className="task-main" onClick={() => onOpen(task.id)}>
         <span className="task-title">{task.title}</span>
-        {(task.due_date || task.due_time || task.priority === 1 || task.tags) && (
+        {(task.due_date ||
+          task.due_time ||
+          task.priority === 1 ||
+          task.tags) && (
           <span className="task-meta">
-            {task.due_date && <span className="due">{task.due_date}{task.due_time ? ` ${task.due_time}` : ''}</span>}
+            {task.due_date && (
+              <span className="due">
+                {task.due_date}
+                {task.due_time ? ` ${task.due_time}` : ''}
+              </span>
+            )}
             {task.priority === 1 && <span className="priority">高</span>}
             {task.tags && <span>{task.tags}</span>}
           </span>
         )}
       </button>
-      <button className="more-button" onClick={() => onOpen(task.id)} aria-label="詳細を開く">›</button>
+      <button
+        className="more-button"
+        onClick={() => onOpen(task.id)}
+        aria-label="詳細を開く"
+      >
+        ›
+      </button>
     </article>
   );
 }
@@ -304,8 +462,14 @@ function BottomTabs({ view }: { view: TaskView }) {
   return (
     <nav className="bottom-tabs" aria-label="メインナビゲーション">
       {(['today', 'inbox', 'all'] as TaskView[]).map((item) => (
-        <button key={item} className={view === item ? 'active' : ''} onClick={() => navigate(pathForView(item))}>
-          <span className="tab-icon">{item === 'today' ? '◷' : item === 'inbox' ? '□' : '☷'}</span>
+        <button
+          key={item}
+          className={view === item ? 'active' : ''}
+          onClick={() => navigate(pathForView(item))}
+        >
+          <span className="tab-icon">
+            {item === 'today' ? '◷' : item === 'inbox' ? '□' : '☷'}
+          </span>
           <span>{viewTitles[item]}</span>
         </button>
       ))}
@@ -313,7 +477,13 @@ function BottomTabs({ view }: { view: TaskView }) {
   );
 }
 
-function ConnectionSettings({ onBack, onError }: { onBack: () => void; onError: (message: string) => void }) {
+function ConnectionSettings({
+  onBack,
+  onError,
+}: {
+  onBack: () => void;
+  onError: (message: string) => void;
+}) {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -328,7 +498,8 @@ function ConnectionSettings({ onBack, onError }: { onBack: () => void; onError: 
       setConnections(response.connections);
       setTruncated(response.truncated);
     } catch (error) {
-      const message = error instanceof Error ? error.message : '接続の取得に失敗しました';
+      const message =
+        error instanceof Error ? error.message : '接続の取得に失敗しました';
       setLoadError(message);
       throw error;
     } finally {
@@ -341,13 +512,16 @@ function ConnectionSettings({ onBack, onError }: { onBack: () => void; onError: 
   }, [loadConnections]);
 
   const disconnect = async (connection: Connection) => {
-    if (!window.confirm(`「${connection.client_name}」を切断しますか？`)) return;
+    if (!window.confirm(`「${connection.client_name}」を切断しますか？`))
+      return;
     if (removingId) return;
     setRemovingId(connection.id);
     try {
       await removeConnection(connection.id);
     } catch (error) {
-      onError(error instanceof Error ? error.message : '接続の切断に失敗しました');
+      onError(
+        error instanceof Error ? error.message : '接続の切断に失敗しました',
+      );
       return;
     } finally {
       setRemovingId(null);
@@ -360,17 +534,38 @@ function ConnectionSettings({ onBack, onError }: { onBack: () => void; onError: 
   return (
     <>
       <header className="detail-header">
-        <button className="back-button" type="button" onClick={onBack} aria-label="一覧に戻る">‹</button>
-        <div><p className="eyebrow">SETTINGS</p><h1>設定</h1></div>
+        <button
+          className="back-button"
+          type="button"
+          onClick={onBack}
+          aria-label="一覧に戻る"
+        >
+          ‹
+        </button>
+        <div>
+          <p className="eyebrow">SETTINGS</p>
+          <h1>設定</h1>
+        </div>
       </header>
-      {loading ? <Loading /> : loadError ? <ErrorState message={loadError} onRetry={() => void loadConnections().catch(() => undefined)} /> : (
+      {loading ? (
+        <Loading />
+      ) : loadError ? (
+        <ErrorState
+          message={loadError}
+          onRetry={() => void loadConnections().catch(() => undefined)}
+        />
+      ) : (
         <>
           {truncated && (
             <p className="notice" role="status">
               接続が多いため、一部だけ表示しています。ここに出ていない接続は切断できません。
             </p>
           )}
-          <ConnectionList connections={connections} removingId={removingId} onDisconnect={(connection) => void disconnect(connection)} />
+          <ConnectionList
+            connections={connections}
+            removingId={removingId}
+            onDisconnect={(connection) => void disconnect(connection)}
+          />
         </>
       )}
     </>
@@ -387,7 +582,13 @@ function ConnectionList({
   onDisconnect: (connection: Connection) => void;
 }) {
   if (connections.length === 0) {
-    return <div className="empty-state"><div className="empty-icon">◌</div><p>接続中のクライアントはありません</p><small>OAuth クライアントを接続すると、ここに表示されます。</small></div>;
+    return (
+      <div className="empty-state">
+        <div className="empty-icon">◌</div>
+        <p>接続中のクライアントはありません</p>
+        <small>OAuth クライアントを接続すると、ここに表示されます。</small>
+      </div>
+    );
   }
   return (
     <section className="connection-list" aria-label="接続中のクライアント一覧">
@@ -396,11 +597,22 @@ function ConnectionList({
           <div className="connection-main">
             <h2>{connection.client_name}</h2>
             <div className="connection-scopes" aria-label="許可したスコープ">
-              {connection.scope.map((scope) => <span className="connection-scope" key={scope}>{scope}</span>)}
+              {connection.scope.map((scope) => (
+                <span className="connection-scope" key={scope}>
+                  {scope}
+                </span>
+              ))}
             </div>
-            <p className="connection-created">接続日時: {formatConnectionDate(connection.created_at)}</p>
+            <p className="connection-created">
+              接続日時: {formatConnectionDate(connection.created_at)}
+            </p>
           </div>
-          <button className="button secondary disconnect-button" type="button" disabled={removingId !== null} onClick={() => onDisconnect(connection)}>
+          <button
+            className="button secondary disconnect-button"
+            type="button"
+            disabled={removingId !== null}
+            onClick={() => onDisconnect(connection)}
+          >
             {removingId === connection.id ? '切断中…' : '切断'}
           </button>
         </article>
@@ -419,9 +631,22 @@ function formatConnectionDate(timestamp: number): string {
   });
 }
 
-type EditableTask = Pick<Task, 'title' | 'note' | 'due_date' | 'due_time' | 'priority' | 'tags'>;
+type EditableTask = Pick<
+  Task,
+  'title' | 'note' | 'due_date' | 'due_time' | 'priority' | 'tags'
+>;
 
-function TaskDetail({ id, onBack, onDeleted, onError }: { id: number; onBack: () => void; onDeleted: () => void; onError: (message: string) => void }) {
+function TaskDetail({
+  id,
+  onBack,
+  onDeleted,
+  onError,
+}: {
+  id: number;
+  onBack: () => void;
+  onDeleted: () => void;
+  onError: (message: string) => void;
+}) {
   const [task, setTask] = useState<Task | null>(null);
   const [form, setForm] = useState<EditableTask | null>(null);
   const [loading, setLoading] = useState(true);
@@ -435,17 +660,57 @@ function TaskDetail({ id, onBack, onDeleted, onError }: { id: number; onBack: ()
       .then((loaded) => {
         if (cancelled) return;
         setTask(loaded);
-        setForm({ title: loaded.title, note: loaded.note, due_date: loaded.due_date, due_time: loaded.due_time, priority: loaded.priority, tags: loaded.tags });
+        setForm({
+          title: loaded.title,
+          note: loaded.note,
+          due_date: loaded.due_date,
+          due_time: loaded.due_time,
+          priority: loaded.priority,
+          tags: loaded.tags,
+        });
       })
-      .catch((error) => onError(error instanceof Error ? error.message : 'タスクの取得に失敗しました'))
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .catch((error) =>
+        onError(
+          error instanceof Error ? error.message : 'タスクの取得に失敗しました',
+        ),
+      )
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [id, onError]);
 
-  if (loading) return <><header className="detail-header"><button className="back-button" onClick={onBack}>‹</button><h1>詳細</h1></header><Loading /></>;
-  if (!task || !form) return <><header className="detail-header"><button className="back-button" onClick={onBack}>‹</button><h1>詳細</h1></header><div className="empty-state">タスクが見つかりません。</div></>;
+  if (loading)
+    return (
+      <>
+        <header className="detail-header">
+          <button className="back-button" onClick={onBack}>
+            ‹
+          </button>
+          <h1>詳細</h1>
+        </header>
+        <Loading />
+      </>
+    );
+  if (!task || !form)
+    return (
+      <>
+        <header className="detail-header">
+          <button className="back-button" onClick={onBack}>
+            ‹
+          </button>
+          <h1>詳細</h1>
+        </header>
+        <div className="empty-state">タスクが見つかりません。</div>
+      </>
+    );
 
-  const setField = <K extends keyof EditableTask,>(key: K, value: EditableTask[K]) => setForm((current) => current ? { ...current, [key]: value } : current);
+  const setField = <K extends keyof EditableTask>(
+    key: K,
+    value: EditableTask[K],
+  ) => setForm((current) => (current ? { ...current, [key]: value } : current));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!form.title.trim() || saving) return;
@@ -453,7 +718,14 @@ function TaskDetail({ id, onBack, onDeleted, onError }: { id: number; onBack: ()
     try {
       const saved = await updateTask(id, { ...form, title: form.title.trim() });
       setTask(saved);
-      setForm({ title: saved.title, note: saved.note, due_date: saved.due_date, due_time: saved.due_time, priority: saved.priority, tags: saved.tags });
+      setForm({
+        title: saved.title,
+        note: saved.note,
+        due_date: saved.due_date,
+        due_time: saved.due_time,
+        priority: saved.priority,
+        tags: saved.tags,
+      });
     } catch (error) {
       onError(error instanceof Error ? error.message : '保存に失敗しました');
     } finally {
@@ -465,7 +737,9 @@ function TaskDetail({ id, onBack, onDeleted, onError }: { id: number; onBack: ()
     if (statusUpdating) return;
     setStatusUpdating(true);
     try {
-      const saved = await updateTask(id, { status: task.status === 'done' ? 'open' : 'done' });
+      const saved = await updateTask(id, {
+        status: task.status === 'done' ? 'open' : 'done',
+      });
       setTask(saved);
     } catch (error) {
       onError(error instanceof Error ? error.message : '更新に失敗しました');
@@ -486,26 +760,110 @@ function TaskDetail({ id, onBack, onDeleted, onError }: { id: number; onBack: ()
 
   return (
     <>
-      <header className="detail-header"><button className="back-button" onClick={onBack}>‹</button><div><p className="eyebrow">TASK DETAIL</p><h1>タスク詳細</h1></div></header>
+      <header className="detail-header">
+        <button className="back-button" onClick={onBack}>
+          ‹
+        </button>
+        <div>
+          <p className="eyebrow">TASK DETAIL</p>
+          <h1>タスク詳細</h1>
+        </div>
+      </header>
       <form className="detail-form" onSubmit={submit}>
-        <label className="detail-title"><span>タイトル</span><input value={form.title} onChange={(event) => setField('title', event.target.value)} autoFocus /></label>
-        <button type="button" className={`status-toggle ${task.status === 'done' ? 'done' : ''}`} disabled={statusUpdating} onClick={() => void toggle()}>{statusUpdating ? '更新中…' : task.status === 'done' ? '✓ 完了' : '○ 未完了'}</button>
-        <label><span>メモ</span><textarea value={form.note} onChange={(event) => setField('note', event.target.value)} rows={5} placeholder="補足を書いておく" /></label>
-        <div className="form-row"><label><span>期限</span><input type="date" value={form.due_date ?? ''} onChange={(event) => setField('due_date', event.target.value || null)} /></label><label><span>時刻</span><input type="time" value={form.due_time ?? ''} onChange={(event) => setField('due_time', event.target.value || null)} /></label></div>
-        <label className="switch-row"><span>優先度を上げる</span><input type="checkbox" checked={form.priority === 1} onChange={(event) => setField('priority', event.target.checked ? 1 : 0)} /></label>
-        <label><span>タグ</span><input value={form.tags} onChange={(event) => setField('tags', event.target.value)} placeholder="仕事, 個人" /></label>
-        <button className="button primary save-button" disabled={saving}>{saving ? '保存中…' : '変更を保存'}</button>
+        <label className="detail-title">
+          <span>タイトル</span>
+          <input
+            value={form.title}
+            onChange={(event) => setField('title', event.target.value)}
+            autoFocus
+          />
+        </label>
+        <button
+          type="button"
+          className={`status-toggle ${task.status === 'done' ? 'done' : ''}`}
+          disabled={statusUpdating}
+          onClick={() => void toggle()}
+        >
+          {statusUpdating
+            ? '更新中…'
+            : task.status === 'done'
+              ? '✓ 完了'
+              : '○ 未完了'}
+        </button>
+        <label>
+          <span>メモ</span>
+          <textarea
+            value={form.note}
+            onChange={(event) => setField('note', event.target.value)}
+            rows={5}
+            placeholder="補足を書いておく"
+          />
+        </label>
+        <div className="form-row">
+          <label>
+            <span>期限</span>
+            <input
+              type="date"
+              value={form.due_date ?? ''}
+              onChange={(event) =>
+                setField('due_date', event.target.value || null)
+              }
+            />
+          </label>
+          <label>
+            <span>時刻</span>
+            <input
+              type="time"
+              value={form.due_time ?? ''}
+              onChange={(event) =>
+                setField('due_time', event.target.value || null)
+              }
+            />
+          </label>
+        </div>
+        <label className="switch-row">
+          <span>優先度を上げる</span>
+          <input
+            type="checkbox"
+            checked={form.priority === 1}
+            onChange={(event) =>
+              setField('priority', event.target.checked ? 1 : 0)
+            }
+          />
+        </label>
+        <label>
+          <span>タグ</span>
+          <input
+            value={form.tags}
+            onChange={(event) => setField('tags', event.target.value)}
+            placeholder="仕事, 個人"
+          />
+        </label>
+        <button className="button primary save-button" disabled={saving}>
+          {saving ? '保存中…' : '変更を保存'}
+        </button>
       </form>
-      <button className="delete-button" onClick={() => void remove()}>このタスクを削除</button>
+      <button className="delete-button" onClick={() => void remove()}>
+        このタスクを削除
+      </button>
     </>
   );
 }
 
-function DraftDialog({ draft, onCancel, onConfirm }: { draft: TaskDraft; onCancel: () => void; onConfirm: (draft: TaskDraft) => Promise<void> }) {
+function DraftDialog({
+  draft,
+  onCancel,
+  onConfirm,
+}: {
+  draft: TaskDraft;
+  onCancel: () => void;
+  onConfirm: (draft: TaskDraft) => Promise<void>;
+}) {
   const [value, setValue] = useState(draft);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const set = <K extends keyof TaskDraft,>(key: K, next: TaskDraft[K]) => setValue((current) => ({ ...current, [key]: next }));
+  const set = <K extends keyof TaskDraft>(key: K, next: TaskDraft[K]) =>
+    setValue((current) => ({ ...current, [key]: next }));
   const confirm = async () => {
     if (!value.title.trim() || savingRef.current) return;
     savingRef.current = true;
@@ -519,14 +877,87 @@ function DraftDialog({ draft, onCancel, onConfirm }: { draft: TaskDraft; onCance
   };
   return (
     <div className="modal-backdrop" role="presentation">
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="draft-title">
-        <div className="modal-heading"><div><p className="eyebrow">VOICE DRAFT</p><h2 id="draft-title">内容を確認</h2></div><button className="close-button" disabled={saving} onClick={onCancel} aria-label="閉じる">×</button></div>
-        <p className="draft-hint">音声から読み取った内容です。必要ならここで直せます。</p>
-        <label><span>タイトル</span><input value={value.title} onChange={(event) => set('title', event.target.value)} autoFocus /></label>
-        <div className="form-row"><label><span>期限</span><input type="date" value={value.due_date ?? ''} onChange={(event) => set('due_date', event.target.value || null)} /></label><label><span>時刻</span><input type="time" value={value.due_time ?? ''} onChange={(event) => set('due_time', event.target.value || null)} /></label></div>
-        <label><span>メモ</span><textarea value={value.note} onChange={(event) => set('note', event.target.value)} rows={3} /></label>
-        <label className="switch-row"><span>優先度を上げる</span><input type="checkbox" checked={value.priority === 1} onChange={(event) => set('priority', event.target.checked ? 1 : 0)} /></label>
-        <div className="modal-actions"><button className="button secondary" disabled={saving} onClick={onCancel}>キャンセル</button><button className="button primary" onClick={() => void confirm()} disabled={saving || !value.title.trim()}>{saving ? '追加中…' : 'この内容で追加'}</button></div>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="draft-title"
+      >
+        <div className="modal-heading">
+          <div>
+            <p className="eyebrow">VOICE DRAFT</p>
+            <h2 id="draft-title">内容を確認</h2>
+          </div>
+          <button
+            className="close-button"
+            disabled={saving}
+            onClick={onCancel}
+            aria-label="閉じる"
+          >
+            ×
+          </button>
+        </div>
+        <p className="draft-hint">
+          音声から読み取った内容です。必要ならここで直せます。
+        </p>
+        <label>
+          <span>タイトル</span>
+          <input
+            value={value.title}
+            onChange={(event) => set('title', event.target.value)}
+            autoFocus
+          />
+        </label>
+        <div className="form-row">
+          <label>
+            <span>期限</span>
+            <input
+              type="date"
+              value={value.due_date ?? ''}
+              onChange={(event) => set('due_date', event.target.value || null)}
+            />
+          </label>
+          <label>
+            <span>時刻</span>
+            <input
+              type="time"
+              value={value.due_time ?? ''}
+              onChange={(event) => set('due_time', event.target.value || null)}
+            />
+          </label>
+        </div>
+        <label>
+          <span>メモ</span>
+          <textarea
+            value={value.note}
+            onChange={(event) => set('note', event.target.value)}
+            rows={3}
+          />
+        </label>
+        <label className="switch-row">
+          <span>優先度を上げる</span>
+          <input
+            type="checkbox"
+            checked={value.priority === 1}
+            onChange={(event) => set('priority', event.target.checked ? 1 : 0)}
+          />
+        </label>
+        <div className="modal-actions">
+          <button
+            className="button secondary"
+            disabled={saving}
+            onClick={onCancel}
+          >
+            キャンセル
+          </button>
+          <button
+            className="button primary"
+            onClick={() => void confirm()}
+            disabled={saving || !value.title.trim()}
+          >
+            {saving ? '追加中…' : 'この内容で追加'}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,10 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import type { Task, TaskCreateInput, TaskStatus, TaskUpdateInput } from '../shared/types';
+import type {
+  Task,
+  TaskCreateInput,
+  TaskStatus,
+  TaskUpdateInput,
+} from '../shared/types';
 
 export type TaskView = 'today' | 'inbox' | 'all';
 
@@ -52,21 +57,36 @@ export async function listTasks(
     sql += ` ORDER BY created_at DESC, id DESC`;
   }
 
-  const result = await db.prepare(sql).bind(...bindings).all<TaskRow>();
+  const result = await db
+    .prepare(sql)
+    .bind(...bindings)
+    .all<TaskRow>();
   return result.results.map(toTask);
 }
 
-export async function getTask(db: D1Database, id: number): Promise<Task | null> {
-  const row = await db.prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`).bind(id).first<TaskRow>();
+export async function getTask(
+  db: D1Database,
+  id: number,
+): Promise<Task | null> {
+  const row = await db
+    .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`)
+    .bind(id)
+    .first<TaskRow>();
   return row ? toTask(row) : null;
 }
 
-export async function createTask(db: D1Database, input: Required<Pick<TaskCreateInput, 'title'>> & Omit<TaskCreateInput, 'title'>): Promise<Task> {
+export async function createTask(
+  db: D1Database,
+  input: Required<Pick<TaskCreateInput, 'title'>> &
+    Omit<TaskCreateInput, 'title'>,
+): Promise<Task> {
   const status = input.status ?? 'open';
   const result = await db
-    .prepare(`INSERT INTO tasks
+    .prepare(
+      `INSERT INTO tasks
       (title, note, status, due_date, due_time, priority, tags, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
+    )
     .bind(
       input.title,
       input.note ?? '',
@@ -84,7 +104,11 @@ export async function createTask(db: D1Database, input: Required<Pick<TaskCreate
   return task;
 }
 
-export async function updateTask(db: D1Database, id: number, input: TaskUpdateInput): Promise<Task | null> {
+export async function updateTask(
+  db: D1Database,
+  id: number,
+  input: TaskUpdateInput,
+): Promise<Task | null> {
   const updates: string[] = [];
   const bindings: Array<string | number | null> = [];
 
@@ -116,7 +140,9 @@ export async function updateTask(db: D1Database, id: number, input: TaskUpdateIn
     updates.push('status = ?');
     bindings.push(input.status);
     // Keep status and completed_at coupled in the same UPDATE statement.
-    updates.push("completed_at = CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END");
+    updates.push(
+      "completed_at = CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END",
+    );
     bindings.push(input.status);
   }
 
@@ -124,12 +150,18 @@ export async function updateTask(db: D1Database, id: number, input: TaskUpdateIn
   updates.push("updated_at = datetime('now')");
   bindings.push(id);
 
-  const result = await db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).bind(...bindings).run();
+  const result = await db
+    .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`)
+    .bind(...bindings)
+    .run();
   if (!result.success || result.meta.changes === 0) return null;
   return getTask(db, id);
 }
 
 export async function deleteTask(db: D1Database, id: number): Promise<boolean> {
-  const result = await db.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run();
+  const result = await db
+    .prepare('DELETE FROM tasks WHERE id = ?')
+    .bind(id)
+    .run();
   return result.success && result.meta.changes > 0;
 }

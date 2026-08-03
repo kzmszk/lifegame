@@ -1,6 +1,7 @@
 # lifegame
 
 ## 背景
+
 人生はできるだけ楽しむためのゲームだ．
 
 今の世の中、AIに人類が追い抜かれようとしている、そんなバカバカしさの真っ只中で犬死しないための方法序説としてこのレポジトリを準備する．
@@ -9,20 +10,20 @@
 
 ## 構想
 
-* おれの秘書
-  * おれのタスク管理
-  * おれの健康管理
-  * おれの運動管理
-  * おれの情報収集支援
+- おれの秘書
+  - おれのタスク管理
+  - おれの健康管理
+  - おれの運動管理
+  - おれの情報収集支援
 
 ## 要件
 
-* 無料で利用できるWEBサービスとして最初は開発する
-  * cloudflare worker を利用
-  * typescript を使う
-  * スマホでもPCでも利用できること
-  * 音声入力に対応できること
-* 利用できるのは自分だけ
+- 無料で利用できるWEBサービスとして最初は開発する
+  - cloudflare worker を利用
+  - typescript を使う
+  - スマホでもPCでも利用できること
+  - 音声入力に対応できること
+- 利用できるのは自分だけ
 
 ## 設計
 
@@ -44,6 +45,18 @@ npx wrangler deploy
 ```
 
 `wrangler deploy` は設定済みの `npm run build` を先に実行するため、クリーン checkout でも `public/` 以下の SPA アセットが生成される。
+
+### コード品質チェック
+
+ローカルでは次のコマンドを使う。`npm run check` は CI と同じチェックをまとめて実行する。
+
+```sh
+npm run format       # Prettier で整形
+npm run lint         # ESLint
+npm run typecheck    # TypeScript の型チェック
+npm test             # Vitest
+npm run check        # 上記のチェックと本番ビルドを一括実行
+```
 
 ## Phase 4: MCP と Claude
 
