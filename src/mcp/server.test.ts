@@ -4,11 +4,20 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { registerLifegameTools } from './registration';
 
+// Revocation is looked up in D1 alongside the task queries, so the fakes below
+// answer both. `first()` returning null is what "this grant is still live" looks like.
+
+function liveDb() {
+  return {
+    prepare: () => ({ bind: () => ({ first: async () => null, run: async () => ({ success: true, meta: { changes: 0 } }) }) }),
+  } as unknown as D1Database;
+}
+
 describe('MCP tool registration', () => {
   it('publishes read/write/destructive annotations and returns tool errors for missing scopes', async () => {
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     const props = { email: 'owner@example.com', scopes: ['tasks:read'] };
-    registerLifegameTools(server, {} as D1Database, () => props);
+    registerLifegameTools(server, liveDb(), () => props);
 
     const registeredTools = (server as unknown as {
       _registeredTools: Record<string, {
@@ -72,5 +81,39 @@ describe('MCP tool registration', () => {
       task: typeof storedTask;
     };
     expect(fullPayload.task).toEqual(storedTask);
+  });
+
+  it('refuses every tool for a token whose grant was revoked', async () => {
+    // Stands in for the token a refresh minted while racing a disconnect: the
+    // provider still accepts it, so the tools are where it has to be stopped.
+    const revokedDb = {
+      prepare: (sql: string) => ({
+        bind: (userId: string, grantId: string) => ({
+          first: async () => (sql.includes('revoked_grants') && userId === 'owner@example.com' && grantId === 'grant-1'
+            ? { revoked: 1 }
+            : null),
+          run: async () => ({ success: true, meta: { changes: 1 } }),
+        }),
+      }),
+    } as unknown as D1Database;
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    const props = { email: 'owner@example.com', scopes: ['tasks:read', 'tasks:write'], grantId: 'grant-1' };
+    registerLifegameTools(server, revokedDb, () => props);
+    const registeredTools = (server as unknown as {
+      _registeredTools: Record<string, { handler: (input: unknown) => Promise<unknown> }>;
+    })._registeredTools;
+
+    for (const [name, input] of [
+      ['get_daily_summary', {}],
+      ['list_tasks', { view: 'today' }],
+      ['create_task', { title: '追加' }],
+      ['update_task', { id: 1, priority: 1 }],
+      ['delete_task', { id: 1 }],
+    ] as const) {
+      const result = await registeredTools[name].handler(input);
+
+      expect(result, name).toMatchObject({ isError: true });
+      expect((result as { content: Array<{ text: string }> }).content[0].text).toContain('切断されています');
+    }
   });
 });
