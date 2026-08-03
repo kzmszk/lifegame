@@ -6,6 +6,7 @@ function env(overrides: Record<string, unknown> = {}) {
   return {
     DB: {} as D1Database,
     ASSETS: { fetch: vi.fn() },
+    OAUTH_KV: { put: vi.fn(), get: vi.fn() },
     AUTH_REQUIRED: 'false',
     ...overrides,
   };
@@ -126,6 +127,32 @@ describe('API safety boundaries', () => {
     expect(revokeGrant).toHaveBeenCalledWith('grant-1', 'me@example.com');
     // A refresh racing with the first pass re-saves the grant; the second pass sweeps it.
     expect(revokeGrant).toHaveBeenCalledTimes(2);
+  });
+
+  it('marks the grant revoked before sweeping it, so an in-flight refresh is refused', async () => {
+    const order: string[] = [];
+    const put = vi.fn(async () => { order.push('mark'); });
+    const revokeGrant = vi.fn(async () => { order.push('revoke'); });
+    const response = await app.request(
+      '/api/connections/grant-1',
+      { method: 'DELETE', headers: { 'Cf-Access-Authenticated-User-Email': 'me@example.com' } },
+      env({
+        AUTH_REQUIRED: 'true',
+        ALLOWED_EMAIL: 'me@example.com',
+        OAUTH_KV: { put, get: vi.fn() },
+        OAUTH_PROVIDER: {
+          listUserGrants: vi.fn().mockResolvedValue({
+            items: [{ id: 'grant-1', clientId: 'client-1', userId: 'me@example.com', scope: [], metadata: {}, createdAt: 1 }],
+          }),
+          revokeGrant,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(put).toHaveBeenCalledWith('revoked:me@example.com:grant-1', '1', { expirationTtl: 30 * 24 * 60 * 60 });
+    // Marking after the sweep would leave the race the marker exists to close.
+    expect(order).toEqual(['mark', 'revoke', 'revoke']);
   });
 
   it('stops scanning once the grant being revoked is found', async () => {
