@@ -56,6 +56,8 @@ export interface Connection {
 
 export interface ConnectionsResponse {
   connections: Connection[];
+  /** True when the page budget ran out, so this list is partial. */
+  truncated: boolean;
 }
 
 export interface TasksResponse {

@@ -315,6 +315,7 @@ function BottomTabs({ view }: { view: TaskView }) {
 
 function ConnectionSettings({ onBack, onError }: { onBack: () => void; onError: (message: string) => void }) {
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -323,7 +324,9 @@ function ConnectionSettings({ onBack, onError }: { onBack: () => void; onError: 
     setLoading(true);
     setLoadError(null);
     try {
-      setConnections(await fetchConnections());
+      const response = await fetchConnections();
+      setConnections(response.connections);
+      setTruncated(response.truncated);
     } catch (error) {
       const message = error instanceof Error ? error.message : '接続の取得に失敗しました';
       setLoadError(message);
@@ -361,7 +364,14 @@ function ConnectionSettings({ onBack, onError }: { onBack: () => void; onError: 
         <div><p className="eyebrow">SETTINGS</p><h1>設定</h1></div>
       </header>
       {loading ? <Loading /> : loadError ? <ErrorState message={loadError} onRetry={() => void loadConnections().catch(() => undefined)} /> : (
-        <ConnectionList connections={connections} removingId={removingId} onDisconnect={(connection) => void disconnect(connection)} />
+        <>
+          {truncated && (
+            <p className="notice" role="status">
+              接続が多いため、一部だけ表示しています。ここに出ていない接続は切断できません。
+            </p>
+          )}
+          <ConnectionList connections={connections} removingId={removingId} onDisconnect={(connection) => void disconnect(connection)} />
+        </>
       )}
     </>
   );

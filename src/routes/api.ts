@@ -206,7 +206,9 @@ api.get('/connections', async (c) => {
   const connections = scan.grants
     .map(toConnection)
     .sort((left, right) => right.created_at - left.created_at);
-  return c.json({ connections });
+  // A partial list that looks complete would hide connections the user cannot
+  // then reach to disconnect, so the shortfall is reported rather than logged only.
+  return c.json({ connections, truncated: scan.truncated });
 });
 
 async function revokeConnection(c: Context<{ Bindings: Env }>) {

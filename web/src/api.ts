@@ -1,5 +1,4 @@
 import type {
-  Connection,
   ConnectionsResponse,
   ErrorResponse,
   Task,
@@ -62,9 +61,8 @@ export async function removeTask(id: number): Promise<void> {
   await request<{ ok: true }>(`/api/tasks/${id}`, { method: 'DELETE' });
 }
 
-export async function fetchConnections(): Promise<Connection[]> {
-  const response = await request<ConnectionsResponse>('/api/connections');
-  return response.connections;
+export async function fetchConnections(): Promise<ConnectionsResponse> {
+  return request<ConnectionsResponse>('/api/connections');
 }
 
 export async function removeConnection(id: string): Promise<void> {

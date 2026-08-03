@@ -101,6 +101,7 @@ describe('API safety boundaries', () => {
         { id: 'grant-new', client_id: 'client-new', client_name: 'Claude', scope: ['tasks:read', 'tasks:write'], created_at: 1785734382 },
         { id: 'grant-old', client_id: 'client-old', client_name: 'client-old', scope: ['tasks:read'], created_at: 1785734300 },
       ],
+      truncated: false,
     });
     expect(listUserGrants).toHaveBeenNthCalledWith(1, 'me@example.com', { limit: 100 });
     expect(listUserGrants).toHaveBeenNthCalledWith(2, 'me@example.com', { limit: 100, cursor: 'page-2' });
@@ -237,7 +238,8 @@ describe('API safety boundaries', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ connections: [] });
+    // A partial list must say so; the UI hides connections it cannot show otherwise.
+    expect(await response.json()).toEqual({ connections: [], truncated: true });
     // Five pages keeps the worst case (one list plus one get per grant) inside the
     // 1000-operation KV budget, with headroom for a revocation on the same request.
     expect(listUserGrants).toHaveBeenCalledTimes(5);
