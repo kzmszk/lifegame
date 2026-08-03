@@ -117,10 +117,17 @@ claude mcp add --transport http lifegame https://<workerのホスト名>/mcp
 
 その後Claude Codeを起動し、`/mcp` を実行して `lifegame` を選び、ブラウザのOAuth認証を完了する。
 
-接続後は、`get_daily_summary`、`list_tasks`、`create_task`、`update_task`、`delete_task` が使える。
-朝の定型文は [skills/morning-briefing/SKILL.md](skills/morning-briefing/SKILL.md) を含むフォルダをZIPにして
-claude.aiのSkills設定からアップロードする。
+Codex CLIからも同じサーバーに接続できる(Streamable HTTP + OAuth)。
 
 ```sh
-cd skills && zip -r ../morning-briefing.zip morning-briefing
+codex mcp add lifegame --url https://<workerのホスト名>/mcp
+codex mcp login lifegame
+```
+
+接続後は、`get_daily_summary`、`list_tasks`、`create_task`、`update_task`、`delete_task` が使える。
+朝の定型文は [skills/morning-briefing/](skills/morning-briefing/) にある。クライアントごとの導入手順は
+[INSTALL.md](skills/morning-briefing/INSTALL.md) を参照。claude.ai 用のZIPは次で作れる。
+
+```sh
+npm run skill:zip    # dist/morning-briefing.zip
 ```
