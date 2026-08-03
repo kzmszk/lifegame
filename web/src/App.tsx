@@ -91,11 +91,12 @@ export default function App() {
 
   const handleCreate = useCallback(
     async (text: string) => {
-      await createTask({ text });
+      const task = await createTask({ text });
       const currentRoute = routeRef.current;
       if (currentRoute.kind === 'list') await loadList(currentRoute.view);
+      showToast(`「${task.title}」を追加しました`);
     },
-    [loadList],
+    [loadList, showToast],
   );
 
   const handleVoice = useCallback(
@@ -245,7 +246,7 @@ function QuickAdd({
 
   return (
     <form className="quick-add" onSubmit={submit}>
-      <span className="plus" aria-hidden="true">＋</span>
+      <button className="plus" type="submit" disabled={!text.trim() || saving} aria-label="このタスクを追加">＋</button>
       <input value={text} onChange={(event) => setText(event.target.value)} placeholder="タスクを追加…" aria-label="タスクを追加" />
       <button className={`voice-button ${listening ? 'is-listening' : ''}`} type="button" onClick={startVoice} aria-label="音声入力">
         {listening ? '◉' : '🎤'}
