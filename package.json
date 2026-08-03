@@ -22,7 +22,11 @@
     "node": ">=22.13.0"
   },
   "lint-staged": {
-    "*.{css,html,js,json,jsonc,md,ts,tsx,yaml,yml}": "prettier --write"
+    "*.{js,ts,tsx}": [
+      "prettier --write",
+      "eslint --fix --max-warnings 0"
+    ],
+    "*.{css,html,json,jsonc,md,yaml,yml}": "prettier --write"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.8.2",
