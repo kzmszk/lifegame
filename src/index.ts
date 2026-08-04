@@ -2,7 +2,7 @@ import { OAuthError, OAuthProvider } from '@cloudflare/workers-oauth-provider';
 import { env as workerEnv } from 'cloudflare:workers';
 import { app } from './app';
 import type { Env } from './env';
-import { defaultHandler } from './oauth';
+import { defaultHandler, SUPPORTED_SCOPES } from './oauth';
 import { LifegameMcp } from './mcp/server';
 import { validateClientRegistrationMetadata } from './lib/oauth-policy';
 import { isGrantRevoked } from './lib/revocation';
@@ -36,7 +36,10 @@ export default new OAuthProvider<Env>({
   authorizeEndpoint: '/authorize',
   tokenEndpoint: '/token',
   clientRegistrationEndpoint: '/register',
-  scopesSupported: ['tasks:read', 'tasks:write'],
+  // Shared with the authorize-time validation rather than copied. A client that
+  // discovers scopes here and requests exactly them must be able to reach every
+  // scope the server honours, or the feature behind a missed one is unreachable.
+  scopesSupported: [...SUPPORTED_SCOPES],
   allowPlainPKCE: false,
   clientRegistrationTTL: CLIENT_REGISTRATION_TTL,
   clientRegistrationCallback: ({ clientMetadata }) =>

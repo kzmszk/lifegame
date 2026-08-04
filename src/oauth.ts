@@ -16,6 +16,14 @@ export const SUPPORTED_SCOPES = [
 ] as const;
 type SupportedScope = (typeof SUPPORTED_SCOPES)[number];
 
+// Typed as a total record so a new scope cannot reach the consent page without
+// a description: approving a permission nobody explained is the failure mode.
+const SCOPE_DESCRIPTIONS: Record<SupportedScope, string> = {
+  'tasks:read': 'lifegameのタスクを読む',
+  'tasks:write': 'lifegameのタスクを追加・変更・削除する',
+  'calendar:read': 'Googleカレンダー（private）の予定と祝日を読む',
+};
+
 const CONSENT_CSRF_COOKIE_PREFIX = '__Host-lifegame-consent-';
 const CONSENT_CSRF_MAX_AGE = 600;
 const CONSENT_CSRF_MAX_COOKIE_LENGTH = 512;
@@ -358,6 +366,10 @@ function consentPage(
     oauthRequest.scope.length > 0
       ? oauthRequest.scope.join(', ')
       : `省略（${SUPPORTED_SCOPES.join(' と ')} のすべて）`;
+  const scopeDescriptions = SUPPORTED_SCOPES.map(
+    (scope) =>
+      `<li><code>${escapeHtml(scope)}</code> — ${escapeHtml(SCOPE_DESCRIPTIONS[scope])}</li>`,
+  ).join('');
   const clientName = client.clientName || oauthRequest.clientId;
   const redirectUris = client.redirectUris
     .map((uri) => `<li>${escapeHtml(uri)}</li>`)
@@ -372,11 +384,7 @@ function consentPage(
     <h1>lifegameへの接続</h1>
     <p><strong>${escapeHtml(clientName)}</strong>（client_id: <code>${escapeHtml(client.clientId)}</code>）が、あなたのlifegameのデータにアクセスしようとしています。</p>
     <p>要求された権限: ${escapeHtml(requestedScopes)}</p>
-    <ul>
-      <li><code>tasks:read</code> — lifegameのタスクを読む</li>
-      <li><code>tasks:write</code> — lifegameのタスクを追加・変更・削除する</li>
-      <li><code>calendar:read</code> — Googleカレンダー（private）の予定と祝日を読む</li>
-    </ul>
+    <ul>${scopeDescriptions}</ul>
     <p>登録済みのリダイレクトURI:</p><ul>${redirectUris}</ul>
     <form method="post" action="${escapeHtml(action.toString())}">
       <input type="hidden" name="flow_id" value="${escapeHtml(flowId)}">

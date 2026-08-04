@@ -211,6 +211,20 @@ describe('OAuth consent CSRF protection', () => {
     );
   });
 
+  it('explains every supported scope on the consent page', async () => {
+    const page = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize'),
+      makeEnv({ count: 0 }),
+    );
+    const html = await page.text();
+
+    // Approving a permission that the page never named is the failure this guards.
+    for (const scope of ['tasks:read', 'tasks:write', 'calendar:read']) {
+      expect(html).toContain(`<code>${scope}</code>`);
+    }
+    expect(html).toContain('Googleカレンダー');
+  });
+
   it('allows a custom-scheme callback by scheme in form-action', async () => {
     const env = makeEnv({ count: 0 });
     (
