@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test as base } from '@playwright/test';
@@ -91,7 +91,10 @@ function uniqueClientName(label: string): string {
 }
 
 function pkcePair(): { codeVerifier: string; codeChallenge: string } {
-  const codeVerifier = randomUUID().replaceAll('-', '');
+  // RFC 7636 wants 43-128 unreserved characters. A hyphen-stripped UUID is 32,
+  // which the provider happens to accept today; 32 random bytes base64url-encode
+  // to 43, so a stricter provider cannot turn this into a mystery e2e failure.
+  const codeVerifier = randomBytes(32).toString('base64url');
   const codeChallenge = createHash('sha256')
     .update(codeVerifier)
     .digest('base64url');
