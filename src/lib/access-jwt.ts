@@ -3,7 +3,13 @@ import type { Env } from '../env';
 import type { AccessAuthError, AccessUser } from './access';
 
 // jose keeps the fetched keys and its own rate limiting inside the set it returns,
-// so building one per request would refetch the JWKS on every call.
+// so building one per request would refetch the JWKS on every call. The cache is
+// per isolate; a cold isolate simply fetches once.
+//
+// An unknown kid makes jose refetch, but no more often than its cooldown, so a
+// key rotation can be refused for that window. Access publishes the next key
+// alongside the current one well before switching to it, so a token signed by a
+// kid this cache has never seen is not a case worth widening the window for.
 const jwkSets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 
 function jwksFor(issuer: string) {
@@ -56,11 +62,16 @@ export async function verifyAccessJwt(
     ({ payload } = await jwtVerify(token, jwksFor(issuer), {
       issuer,
       audience,
+      // Access always issues exp, so requiring it costs nothing and keeps a token
+      // that somehow lacks one from being valid forever.
+      requiredClaims: ['exp'],
     }));
-  } catch {
+  } catch (cause) {
     // A JWKS that cannot be fetched lands here too. Both cases mean the request is
     // unproven, and treating an unproven request as authenticated is the failure
-    // this verification exists to prevent.
+    // this verification exists to prevent. They need different fixes though, and
+    // the client is told the same thing either way, so the reason is logged.
+    console.warn('Access JWT の検証に失敗しました', cause);
     return {
       message: 'Cloudflare Access の認証情報を検証できませんでした',
       status: 401,

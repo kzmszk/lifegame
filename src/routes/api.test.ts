@@ -202,6 +202,41 @@ describe('API safety boundaries', () => {
     });
   });
 
+  it('does not fall back to the email header when a valid JWT carries no email', async () => {
+    stubAccessJwks();
+    const token = await new SignJWT({})
+      .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+      .setIssuer(ACCESS_TEAM_DOMAIN)
+      .setAudience(ACCESS_AUD)
+      .setIssuedAt()
+      .setExpirationTime('5m')
+      .sign(accessKeyPair.privateKey);
+    const response = await requestWithAccessJwt(token, {
+      'Cf-Access-Authenticated-User-Email': 'me@example.com',
+    });
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Cloudflare Access のユーザー情報がありません',
+    });
+  });
+
+  it('rejects a signed JWT that never expires', async () => {
+    stubAccessJwks();
+    const token = await new SignJWT({ email: 'me@example.com' })
+      .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+      .setIssuer(ACCESS_TEAM_DOMAIN)
+      .setAudience(ACCESS_AUD)
+      .setIssuedAt()
+      .sign(accessKeyPair.privateKey);
+    const response = await requestWithAccessJwt(token);
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Cloudflare Access の認証情報を検証できませんでした',
+    });
+  });
+
   it('returns JSON for unknown API paths and unsupported methods', async () => {
     const unknown = await app.request('/api/does-not-exist', {}, env());
     const unsupported = await app.request(
