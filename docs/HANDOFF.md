@@ -157,8 +157,21 @@ DCR により Claude 側が自動で登録する。設定に必要なのはURL�
 
 - Codex のサンドボックスは `npm install` と `git commit` ができない。依存追加・検証・コミットは
   Claude 側で行う
+- **Claude Code から委譲するときは codex plugin のサブエージェント(`codex:codex-rescue`)を使う**。
+  `codex exec` を Bash から直接叩くとパーミッションのクラシファイアに弾かれる
+- サブエージェントは**ジョブを起動して即座に返るだけ**で、完了を待たない。返ってきた task ID を
+  companion スクリプトに渡して自分で状態を見ること。状態確認・cancel・resume もサブエージェントの
+  権限外なので、すべて呼び出し側で行う
+
+  ```sh
+  node ~/.claude/plugins/cache/openai-codex/codex/<version>/scripts/codex-companion.mjs status <task-id>
+  ```
+
 - Codex ジョブは実行中に静かに死ぬことがある(statusは running のままプロセスだけ消える)。
   PID の生存確認で監視し、死んでいたら `cancel` してから `--resume-last` で再開する
+- GitHub の Codex ボットは、**指摘が無いとき PR 本文に `+1` リアクションを付けるだけ**で
+  レビューもコメントも残さない。`gh pr view` の reviews/comments は空のままなので、
+  `gh api repos/<owner>/<repo>/issues/<n>/reactions` を見ないとレビュー済みだと分からない
 - **`codex exec` をバックグラウンド(TTY なし)で回すときは `< /dev/null` を付ける**。
   付けないと、プロンプトを引数で渡していても標準入力からの追加入力を待ち続けて固まる。
   プロセスは生きたままで、ログは `Reading additional input from stdin...` の1行で止まる。
