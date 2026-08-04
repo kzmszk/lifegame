@@ -408,7 +408,7 @@ async function validatedRedirectContext(
 }
 
 async function handleAuthorize(request: Request, env: Env): Promise<Response> {
-  const accessUser = getAccessUser(env, request);
+  const accessUser = await getAccessUser(env, request);
   if (isAccessAuthError(accessUser)) return authErrorResponse(accessUser);
   if (request.method !== 'GET' && request.method !== 'POST') {
     return new Response('Method Not Allowed', {

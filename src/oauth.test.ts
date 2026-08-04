@@ -2,7 +2,8 @@ import type {
   AuthRequest,
   ClientInfo,
 } from '@cloudflare/workers-oauth-provider';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   CSP_REPORT_PATH,
   defaultHandler,
@@ -690,5 +691,115 @@ describe('CSP violation report endpoint', () => {
     const response = await fetchReport(new Request(url));
 
     expect(response.status).toBe(405);
+  });
+});
+
+describe('/authorize Access JWT verification', () => {
+  const TEAM_DOMAIN = 'https://team.cloudflareaccess.com';
+  const AUD = 'access-aud';
+  let keyPair: Awaited<ReturnType<typeof generateKeyPair>>;
+  let publicJwk: Awaited<ReturnType<typeof exportJWK>>;
+
+  beforeAll(async () => {
+    keyPair = await generateKeyPair('RS256');
+    publicJwk = await exportJWK(keyPair.publicKey);
+    publicJwk.kid = 'test-key';
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const makeEnv = (completeAuthorization: unknown) =>
+    ({
+      AUTH_REQUIRED: 'true',
+      ALLOWED_EMAIL: 'me@example.com',
+      ACCESS_TEAM_DOMAIN: TEAM_DOMAIN,
+      ACCESS_AUD: AUD,
+      OAUTH_PROVIDER: {
+        lookupClient: async () => client(),
+        parseAuthRequest: async () => authorizationRequest(),
+        completeAuthorization,
+      },
+    }) as unknown as Env;
+
+  const fetchAuthorize = (request: Request, env: Env) =>
+    defaultHandler.fetch!(
+      request as unknown as Parameters<
+        NonNullable<typeof defaultHandler.fetch>
+      >[0],
+      env,
+      {} as ExecutionContext,
+    );
+
+  const jwt = (email = 'me@example.com') =>
+    new SignJWT({ email })
+      .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+      .setIssuer(TEAM_DOMAIN)
+      .setAudience(AUD)
+      .setIssuedAt()
+      .setExpirationTime('5m')
+      .sign(keyPair.privateKey);
+
+  const stubJwks = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ keys: [publicJwk] })),
+    );
+
+  it('refuses to render the consent page without a verified JWT', async () => {
+    const response = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        // The header alone must not stand in for the assertion.
+        headers: { 'Cf-Access-Authenticated-User-Email': 'me@example.com' },
+      }),
+      makeEnv(async () => ({ redirectTo: 'https://client.example/callback' })),
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it('grants the identity from the JWT, not from the email header', async () => {
+    stubJwks();
+    const completeAuthorization = vi.fn(async () => ({
+      redirectTo: 'https://client.example/callback?code=code-1',
+    }));
+    const env = makeEnv(completeAuthorization);
+    const token = await jwt();
+
+    const page = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        headers: { 'Cf-Access-Jwt-Assertion': token },
+      }),
+      env,
+    );
+    const html = await page.text();
+    const flowId = html.match(/name="flow_id" value="([^"]+)"/)?.[1] ?? '';
+    const csrfToken =
+      html.match(/name="csrf_token" value="([^"]+)"/)?.[1] ?? '';
+    expect(flowId).toBeTruthy();
+
+    const approved = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cf-Access-Jwt-Assertion': token,
+          // A header naming someone else must not reach completeAuthorization.
+          'Cf-Access-Authenticated-User-Email': 'someone-else@example.com',
+          Cookie: `__Host-lifegame-consent-${flowId}=${csrfToken}`,
+        },
+        body: `decision=approve&flow_id=${encodeURIComponent(flowId)}&csrf_token=${encodeURIComponent(csrfToken)}`,
+      }),
+      env,
+    );
+
+    expect(approved.status).toBe(302);
+    expect(completeAuthorization).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'me@example.com',
+        props: expect.objectContaining({ email: 'me@example.com' }),
+      }),
+    );
   });
 });
