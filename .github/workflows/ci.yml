@@ -77,15 +77,14 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
 
+      # No --with-deps: on a cache hit the apt work cost 24s, against 23s for the
+      # whole uncached install, which made the cache a net loss. The ubuntu-latest
+      # image already carries the libraries chromium links against, so this only
+      # fetches the binary. If a future runner image drops one, chromium fails to
+      # launch outright rather than flaking, and --with-deps comes back.
       - name: Install Playwright browser
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
-
-      # The browser binary is cached but the OS packages it links against are not,
-      # since they live outside the cached path.
-      - name: Install Playwright system dependencies
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        run: npx playwright install chromium
 
       # The suite starts its own wrangler dev against a local D1 file, so no
       # Cloudflare credentials are involved. Access is off there because
