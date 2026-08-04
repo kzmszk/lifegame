@@ -14,21 +14,26 @@ Phase 4 のタスク分解のうち **1(MCPサーバー + OAuth)、2(ツール�
 | MCPサーバー `/mcp`     | 稼働中(Streamable HTTP, `McpAgent` + Durable Object)                               |
 | OAuth (DCR, PKCE S256) | 稼働中。`workers-oauth-provider` が Worker のエントリポイント                      |
 | ツール5種              | `get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task` |
-| Cloudflare Access      | 設定済み。`/authorize` は保護、OAuthプロトコル用パスはBypass                       |
+| Cloudflare Access      | 設定済み。`/authorize` は保護、OAuthプロトコル用パスはBypass。JWTをWorker内で検証  |
 | 接続の一覧と切断       | 稼働中。設定画面(ヘッダー右上の `●`)から `/api/connections`                        |
 | ブリーフィングスキル   | claude.ai に登録済み。アプリのチャットで起動を確認した                             |
 
-テストは 65 件。デプロイ前は `npm run check`(format / lint / typecheck / test / build)を通す。
+テストは 76 件。デプロイ前は `npm run check`(format / lint / typecheck / test / build)を通す。
 CI も PR と main への push で同じものを回す。
 
-**リポジトリと本番は一致している**(main = PR #12 マージ後をデプロイ済み、migration 0002 適用済み)。
+⚠️ **リポジトリと本番は一致していない**。main は PR #14(Access JWT 検証)をマージ済みだが、
+**まだデプロイしていない**。本番で動いているのは PR #12 マージ後の版(migration 0002 適用済み)。
 `/csp-report` は 204、`/api/connections` は未認証で 302 を返す。
+
+PR #14 は fail closed なので、デプロイするとき `ACCESS_AUD` の取り違えがあれば `/authorize` と
+`/api/*` が全部落ちる。デプロイ直後にブラウザで `/` を開いて画面が出ることを確認すること。
 
 ## 2. 本番環境の構成
 
 - URL: `https://lifegame.tachicoma.com`(カスタムドメイン。DNSレコードは `custom_domain: true` で自動生成)
 - `workers.dev` と Preview URL は **無効化している**。Access の外に出る入口を作らないため
-- D1 / KV の ID は `wrangler.jsonc` にコミット済み(識別子でありシークレットではない)
+- D1 / KV の ID と `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` は `wrangler.jsonc` にコミット済み
+  (識別子でありシークレットではない。リポジトリは非公開)
 - `ALLOWED_EMAIL` は `wrangler secret` に保存。リポジトリには無い
 - Access アプリは2種類
   - 本体用: ホスト名全体、Action = Allow、Emails に自分のアドレス
@@ -37,14 +42,16 @@ CI も PR と main への push で同じものを回す。
 `/authorize` を Bypass に **入れてはいけない**。「クライアント登録は誰でもできるが、承認できるのは
 Access を通った自分だけ」という設計の要になっている。
 
-## 3. 次にやること(未反映の作業は無い)
+`ACCESS_AUD` は**本体用アプリ**の AUD タグ。Bypass 用のものを入れても JWT の検証自体は通るため、
+取り違えても気づきにくい(別アプリのトークンを受け入れる状態になる)。AUD タグはアプリの設定画面を
+下にスクロールした「詳細設定」にある。ブラウザの `CF_Authorization` cookie をデコードして
+`aud` を読むのが、実際に届く JWT から取れるぶん確実。
 
-### 3.1 保険: Access JWT 検証
+## 3. 次にやること
 
-Worker は `Cf-Access-Authenticated-User-Email` ヘッダーを署名検証せずに信頼している。
-現構成では Access の外に出る入口が無いので実害は無いが、**将来ルートを足したり
-`workers.dev` を戻したときに、この前提が静かに崩れる**。`Cf-Access-Jwt-Assertion` の
-署名・issuer・audience を検証すれば、構成ミスに依存しなくなる。Cloudflare も検証を推奨している。
+### 3.1 まず: PR #14 のデプロイ
+
+上記のとおり main が本番より進んでいる。`npx wrangler deploy` で揃える。
 
 ### 3.2 テストの盲点: ブラウザE2E
 
