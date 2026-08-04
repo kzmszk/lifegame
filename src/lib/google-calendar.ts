@@ -18,7 +18,11 @@ const ACCESS_TOKEN_CACHE_KEY = 'google:access_token';
 const EXPIRY_MARGIN_SECONDS = 60;
 // KV rejects a TTL under 60 seconds, so a token shorter than that is simply not cached.
 const MIN_CACHE_TTL_SECONDS = 60;
-const MAX_EVENTS = 50;
+const MAX_EVENTS_PER_PAGE = 250;
+// A single Tokyo day past this many pages is not a real personal calendar. The
+// cap exists so a pathological response cannot spin; hitting it is logged rather
+// than passed off as a complete list.
+const MAX_EVENT_PAGES = 4;
 const DEFAULT_DURATION_MINUTES = 60;
 
 export type CalendarErrorKind = 'config' | 'auth' | 'upstream';
@@ -175,28 +179,45 @@ async function listEventsOn(
   date: string,
 ): Promise<CalendarEvent[]> {
   const { timeMin, timeMax } = tokyoDayRangeIso(date);
-  const url = new URL(
-    `${API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`,
-  );
-  url.search = new URLSearchParams({
-    timeMin,
-    timeMax,
-    // Without singleEvents the API returns the recurring parent rather than the
-    // occurrences, so weekly events never show up on the day they fall on.
-    singleEvents: 'true',
-    orderBy: 'startTime',
-    timeZone: TIME_ZONE,
-    maxResults: String(MAX_EVENTS),
-  }).toString();
+  const events: CalendarEvent[] = [];
+  let pageToken: string | undefined;
 
-  const body = await callGoogle(env, url.toString(), { method: 'GET' });
-  const items: GoogleEvent[] = Array.isArray(body.items)
-    ? (body.items as GoogleEvent[])
-    : [];
-  return items
-    .filter((event) => event.status !== 'cancelled' && !isDeclined(event))
-    .map(toCalendarEvent)
-    .filter((event): event is CalendarEvent => event !== null);
+  // maxResults is a page size, not a total. Stopping at the first page would
+  // drop the rest of the day's events without any sign that it had happened.
+  for (let page = 0; page < MAX_EVENT_PAGES; page += 1) {
+    const url = new URL(
+      `${API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`,
+    );
+    url.search = new URLSearchParams({
+      timeMin,
+      timeMax,
+      // Without singleEvents the API returns the recurring parent rather than the
+      // occurrences, so weekly events never show up on the day they fall on.
+      singleEvents: 'true',
+      orderBy: 'startTime',
+      timeZone: TIME_ZONE,
+      maxResults: String(MAX_EVENTS_PER_PAGE),
+      ...(pageToken ? { pageToken } : {}),
+    }).toString();
+
+    const body = await callGoogle(env, url.toString(), { method: 'GET' });
+    const items: GoogleEvent[] = Array.isArray(body.items)
+      ? (body.items as GoogleEvent[])
+      : [];
+    events.push(
+      ...items
+        .filter((event) => event.status !== 'cancelled' && !isDeclined(event))
+        .map(toCalendarEvent)
+        .filter((event): event is CalendarEvent => event !== null),
+    );
+
+    pageToken =
+      typeof body.nextPageToken === 'string' ? body.nextPageToken : undefined;
+    if (!pageToken) return events;
+  }
+
+  console.warn(`${date} の予定が多く、取得を打ち切りました (${calendarId})`);
+  return events;
 }
 
 /** Fetch one Tokyo day's events from the primary calendar. */

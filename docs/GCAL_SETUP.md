@@ -71,7 +71,14 @@ GOOGLE_REFRESH_TOKEN=...
 npm run dev
 ```
 
-`GET /api/calendar/events?date=today` が今日の予定を返せば成功。
+`GET /api/calendar/events` が今日の予定を返せば成功。
+
+```bash
+curl -s http://localhost:8787/api/calendar/events
+```
+
+日付を指定する場合は `?date=2026-08-05` のように YYYY-MM-DD で渡す
+(`today` のような相対表現は受け付けず 400 になる)。
 
 ## メンテナンス
 

@@ -189,6 +189,49 @@ describe('listCalendarEvents', () => {
     expect(events.map((event) => event.id)).toEqual(['kept']);
   });
 
+  it('follows nextPageToken so a busy day is not silently truncated', async () => {
+    const { calls } = stubFetch((url) => {
+      const token = new URL(url).searchParams.get('pageToken');
+      if (token === null) {
+        return Response.json({
+          nextPageToken: 'page-2',
+          items: [
+            {
+              id: 'first',
+              summary: '1件目',
+              start: { dateTime: '2026-08-07T09:00:00+09:00' },
+              end: { dateTime: '2026-08-07T10:00:00+09:00' },
+            },
+          ],
+        });
+      }
+      return Response.json({
+        items: [
+          {
+            id: 'second',
+            summary: '2件目',
+            start: { dateTime: '2026-08-07T11:00:00+09:00' },
+            end: { dateTime: '2026-08-07T12:00:00+09:00' },
+          },
+        ],
+      });
+    });
+
+    const events = await listCalendarEvents(env(), '2026-08-07');
+    expect(events.map((event) => event.id)).toEqual(['first', 'second']);
+    expect(calls).toHaveLength(2);
+    expect(new URL(calls[1].url).searchParams.get('pageToken')).toBe('page-2');
+  });
+
+  it('stops paging at the cap instead of looping forever', async () => {
+    // A response that always hands back a token would otherwise never terminate.
+    const { calls } = stubFetch(() =>
+      Response.json({ nextPageToken: 'always-more', items: [] }),
+    );
+    await expect(listCalendarEvents(env(), '2026-08-07')).resolves.toEqual([]);
+    expect(calls.length).toBeLessThanOrEqual(4);
+  });
+
   it('reuses the cached access token across calls', async () => {
     const { fetchMock } = stubFetch(() => Response.json({ items: [] }));
     const shared = env();

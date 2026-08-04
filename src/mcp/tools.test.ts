@@ -464,6 +464,39 @@ describe('get_daily_summary calendar integration', () => {
     expect(summary.calendar_unavailable).toBe(false);
   });
 
+  it('keeps the appointments when only the holiday calendar fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.startsWith('https://oauth2.googleapis.com/token'))
+          return Response.json({ access_token: 'token', expires_in: 3599 });
+        // Only the subscribed holiday calendar is broken here.
+        if (url.includes('holiday')) return new Response('', { status: 404 });
+        return Response.json({
+          items: [
+            {
+              id: 'event-1',
+              summary: 'ピアノ',
+              start: { dateTime: '2026-08-11T18:30:00+09:00' },
+              end: { dateTime: '2026-08-11T19:00:00+09:00' },
+            },
+          ],
+        });
+      }),
+    );
+
+    const summary = await getDailySummary(
+      calendarEnv(new FakeD1([]) as unknown as D1Database),
+      new Date('2026-08-11T03:00:00.000Z'),
+    );
+
+    // Losing an optional extra must not discard what was actually fetched.
+    expect(summary.events.map((event) => event.title)).toEqual(['ピアノ']);
+    expect(summary.holidays).toEqual([]);
+    expect(summary.calendar_unavailable).toBe(false);
+  });
+
   it('flags an outage instead of reporting a free day', async () => {
     vi.stubGlobal(
       'fetch',
