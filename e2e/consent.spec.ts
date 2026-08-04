@@ -142,6 +142,17 @@ async function openConsent(
   const response = await page.goto(`/authorize?${params.toString()}`);
   if (!response) throw new Error('Consent page did not return a response');
   expect(response.status()).toBe(200);
+
+  // The form action carries whatever host the worker saw, which is the custom
+  // domain from `routes` unless e2e:server passes --host. `form-action 'self'`
+  // then blocks the approval, and the only symptom is a waitForURL timeout that
+  // says nothing about the cause. Fail here instead, naming it.
+  const formAction = await page.locator('form').getAttribute('action');
+  expect(
+    new URL(formAction ?? '').origin,
+    'consent form action must share the page origin: keep --host in e2e:server in step with baseURL, port included',
+  ).toBe(new URL(page.url()).origin);
+
   return { response, state, codeVerifier };
 }
 
@@ -160,16 +171,22 @@ async function clickDecision(
 }
 
 // Approved grants survive the test and are visible through the user's connection
-// list, so sweep only this process's marker before the next test starts.
+// list, so sweep only this process's marker before the next test starts. A sweep
+// that fails quietly is worse than no sweep: the next run gets a fresh RUN_ID and
+// will never come back for what this one left behind, so every step is asserted.
 test.afterEach(async ({ request }) => {
   const response = await request.get('/api/connections');
-  if (!response.ok()) return;
-  const { connections } = (await response.json()) as ConnectionsResponse;
+  expect(response.ok()).toBe(true);
+  const { connections, truncated } =
+    (await response.json()) as ConnectionsResponse;
+  // A partial list means this sweep cannot see every grant it created.
+  expect(truncated).toBe(false);
   for (const connection of connections) {
     if (connection.client_name.includes(RUN_ID)) {
-      await request.delete(
+      const deleted = await request.delete(
         `/api/connections/${encodeURIComponent(connection.id)}`,
       );
+      expect(deleted.ok()).toBe(true);
     }
   }
 });
