@@ -62,5 +62,8 @@
   // Production is authenticated by default. Local development overrides this in .dev.vars.
   "vars": {
     "AUTH_REQUIRED": "true",
+    // Replace both placeholders with the values from the protected Access application before deploying.
+    "ACCESS_TEAM_DOMAIN": "REPLACE_BEFORE_DEPLOY_ACCESS_TEAM_DOMAIN",
+    "ACCESS_AUD": "REPLACE_BEFORE_DEPLOY_ACCESS_AUD",
   },
 }

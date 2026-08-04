@@ -60,7 +60,7 @@ function relativeApiPath(path: string): string {
 }
 
 api.use('*', async (c, next) => {
-  const user = getAccessUser(c.env, c.req.raw);
+  const user = await getAccessUser(c.env, c.req.raw);
   if (isAccessAuthError(user)) return error(c, user.message, user.status);
   return next();
 });
@@ -243,7 +243,7 @@ function isValidGrantId(grantId: string): boolean {
 }
 
 api.get('/connections', async (c) => {
-  const accessUser = getAccessUser(c.env, c.req.raw);
+  const accessUser = await getAccessUser(c.env, c.req.raw);
   if (isAccessAuthError(accessUser))
     return error(c, accessUser.message, accessUser.status);
 
@@ -268,7 +268,7 @@ async function revokeConnection(c: Context<{ Bindings: Env }>) {
   const grantId = c.req.param('id') ?? '';
   if (!isValidGrantId(grantId)) return error(c, '接続IDが不正です', 400);
 
-  const accessUser = getAccessUser(c.env, c.req.raw);
+  const accessUser = await getAccessUser(c.env, c.req.raw);
   if (isAccessAuthError(accessUser))
     return error(c, accessUser.message, accessUser.status);
 

@@ -1,4 +1,5 @@
 import type { Env } from '../env';
+import { verifyAccessJwt } from './access-jwt';
 
 export interface AccessUser {
   email: string;
@@ -9,10 +10,13 @@ export interface AccessAuthError {
   status: 401 | 403 | 500;
 }
 
-export function getAccessUser(
-  env: Pick<Env, 'AUTH_REQUIRED' | 'ALLOWED_EMAIL'>,
+export async function getAccessUser(
+  env: Pick<
+    Env,
+    'AUTH_REQUIRED' | 'ALLOWED_EMAIL' | 'ACCESS_TEAM_DOMAIN' | 'ACCESS_AUD'
+  >,
   request: Request,
-): AccessUser | AccessAuthError {
+): Promise<AccessUser | AccessAuthError> {
   // Only an explicit local false disables authentication; missing config stays secure.
   if (env.AUTH_REQUIRED?.trim().toLowerCase() === 'false') {
     return {
@@ -26,19 +30,14 @@ export function getAccessUser(
   if (!allowedEmail)
     return { message: 'ALLOWED_EMAIL が設定されていません', status: 500 };
 
-  const email = request.headers
-    .get('Cf-Access-Authenticated-User-Email')
-    ?.trim();
-  if (!email)
-    return {
-      message: 'Cloudflare Access のユーザー情報がありません',
-      status: 401,
-    };
-  if (email.toLowerCase() !== allowedEmail.toLowerCase()) {
+  const accessUser = await verifyAccessJwt(env, request);
+  if (isAccessAuthError(accessUser)) return accessUser;
+
+  if (accessUser.email.toLowerCase() !== allowedEmail.toLowerCase()) {
     return { message: 'このユーザーは利用を許可されていません', status: 403 };
   }
 
-  return { email };
+  return accessUser;
 }
 
 export function isAccessAuthError(

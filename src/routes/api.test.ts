@@ -1,5 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { describe, expect, it, vi } from 'vitest';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { app } from '../app';
 
 function env(overrides: Record<string, unknown> = {}) {
@@ -17,6 +18,77 @@ function env(overrides: Record<string, unknown> = {}) {
     AUTH_REQUIRED: 'false',
     ...overrides,
   };
+}
+
+const ACCESS_TEAM_DOMAIN = 'https://team.cloudflareaccess.com';
+const ACCESS_AUD = 'access-aud';
+let accessKeyPair: Awaited<ReturnType<typeof generateKeyPair>>;
+let accessPublicJwk: Awaited<ReturnType<typeof exportJWK>>;
+
+beforeAll(async () => {
+  accessKeyPair = await generateKeyPair('RS256');
+  accessPublicJwk = await exportJWK(accessKeyPair.publicKey);
+  accessPublicJwk.kid = 'test-key';
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function stubAccessJwks(): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => Response.json({ keys: [accessPublicJwk] })),
+  );
+}
+
+function accessEnv(overrides: Record<string, unknown> = {}) {
+  return env({
+    AUTH_REQUIRED: 'true',
+    ALLOWED_EMAIL: 'me@example.com',
+    ACCESS_TEAM_DOMAIN,
+    ACCESS_AUD,
+    ...overrides,
+  });
+}
+
+async function accessJwt({
+  privateKey = accessKeyPair.privateKey,
+  email = 'me@example.com',
+  issuer = ACCESS_TEAM_DOMAIN,
+  audience = ACCESS_AUD,
+  expirationTime = '5m',
+}: {
+  privateKey?: typeof accessKeyPair.privateKey;
+  email?: string;
+  issuer?: string;
+  audience?: string;
+  expirationTime?: string | number;
+} = {}): Promise<string> {
+  return new SignJWT({ email })
+    .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+    .setIssuer(issuer)
+    .setAudience(audience)
+    .setIssuedAt()
+    .setExpirationTime(expirationTime)
+    .sign(privateKey);
+}
+
+async function requestWithAccessJwt(
+  token: string | undefined,
+  headers: Record<string, string> = {},
+  overrides: Record<string, unknown> = {},
+): Promise<Response> {
+  return app.request(
+    '/api/tasks',
+    {
+      headers: {
+        ...headers,
+        ...(token ? { 'Cf-Access-Jwt-Assertion': token } : {}),
+      },
+    },
+    accessEnv(overrides),
+  );
 }
 
 describe('API safety boundaries', () => {
@@ -47,6 +119,86 @@ describe('API safety boundaries', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: 'ALLOWED_EMAIL が設定されていません',
+    });
+  });
+
+  it('rejects a request with no Access JWT', async () => {
+    const response = await requestWithAccessJwt(undefined);
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Cloudflare Access のユーザー情報がありません',
+    });
+  });
+
+  it('rejects the legacy email header when no Access JWT is present', async () => {
+    const response = await requestWithAccessJwt(undefined, {
+      'Cf-Access-Authenticated-User-Email': 'me@example.com',
+    });
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Cloudflare Access のユーザー情報がありません',
+    });
+  });
+
+  it('rejects an Access JWT signed by a key outside the JWKS', async () => {
+    stubAccessJwks();
+    const otherKeyPair = await generateKeyPair('RS256');
+    const token = await accessJwt({ privateKey: otherKeyPair.privateKey });
+    const response = await requestWithAccessJwt(token);
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Cloudflare Access の認証情報を検証できませんでした',
+    });
+  });
+
+  it('rejects an Access JWT with the wrong audience', async () => {
+    stubAccessJwks();
+    const token = await accessJwt({ audience: 'another-access-app' });
+    const response = await requestWithAccessJwt(token);
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Cloudflare Access の認証情報を検証できませんでした',
+    });
+  });
+
+  it('rejects an Access JWT with the wrong issuer', async () => {
+    stubAccessJwks();
+    const token = await accessJwt({
+      issuer: 'https://other.cloudflareaccess.com',
+    });
+    const response = await requestWithAccessJwt(token);
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Cloudflare Access の認証情報を検証できませんでした',
+    });
+  });
+
+  it('rejects an expired Access JWT', async () => {
+    stubAccessJwks();
+    const token = await accessJwt({
+      expirationTime: Math.floor(Date.now() / 1000) - 60,
+    });
+    const response = await requestWithAccessJwt(token);
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Cloudflare Access の認証情報を検証できませんでした',
+    });
+  });
+
+  it('rejects a JWT email that is not allowlisted', async () => {
+    stubAccessJwks();
+    const token = await accessJwt({ email: 'other@example.com' });
+    const response = await requestWithAccessJwt(token);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'このユーザーは利用を許可されていません',
     });
   });
 
@@ -81,6 +233,8 @@ describe('API safety boundaries', () => {
   });
 
   it("lists the authenticated user's connections with client metadata and newest first", async () => {
+    stubAccessJwks();
+    const token = await accessJwt();
     const listUserGrants = vi
       .fn()
       .mockResolvedValueOnce({
@@ -110,10 +264,13 @@ describe('API safety boundaries', () => {
       });
     const response = await app.request(
       '/api/connections',
-      { headers: { 'Cf-Access-Authenticated-User-Email': 'me@example.com' } },
-      env({
-        AUTH_REQUIRED: 'true',
-        ALLOWED_EMAIL: 'me@example.com',
+      {
+        headers: {
+          'Cf-Access-Jwt-Assertion': token,
+          'Cf-Access-Authenticated-User-Email': 'attacker@example.com',
+        },
+      },
+      accessEnv({
         OAUTH_PROVIDER: { listUserGrants },
       }),
     );
@@ -203,16 +360,16 @@ describe('API safety boundaries', () => {
   });
 
   it('passes the Access email to revokeGrant and ignores a userId query parameter', async () => {
+    stubAccessJwks();
+    const token = await accessJwt();
     const revokeGrant = vi.fn().mockResolvedValue(undefined);
     const response = await app.request(
       '/api/connections/grant-1?userId=someone-else@example.com',
       {
         method: 'DELETE',
-        headers: { 'Cf-Access-Authenticated-User-Email': 'me@example.com' },
+        headers: { 'Cf-Access-Jwt-Assertion': token },
       },
-      env({
-        AUTH_REQUIRED: 'true',
-        ALLOWED_EMAIL: 'me@example.com',
+      accessEnv({
         OAUTH_PROVIDER: {
           listUserGrants: vi.fn().mockResolvedValue({
             items: [
@@ -239,6 +396,8 @@ describe('API safety boundaries', () => {
   });
 
   it('marks the grant revoked before sweeping it, so an in-flight refresh is refused', async () => {
+    stubAccessJwks();
+    const token = await accessJwt();
     const order: string[] = [];
     const marked: Array<[string, string]> = [];
     const revokeGrant = vi.fn(async () => {
@@ -264,11 +423,9 @@ describe('API safety boundaries', () => {
       '/api/connections/grant-1',
       {
         method: 'DELETE',
-        headers: { 'Cf-Access-Authenticated-User-Email': 'me@example.com' },
+        headers: { 'Cf-Access-Jwt-Assertion': token },
       },
-      env({
-        AUTH_REQUIRED: 'true',
-        ALLOWED_EMAIL: 'me@example.com',
+      accessEnv({
         DB,
         OAUTH_PROVIDER: {
           listUserGrants: vi.fn().mockResolvedValue({

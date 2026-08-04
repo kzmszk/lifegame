@@ -8,4 +8,6 @@ export interface Env {
   MCP_OBJECT: DurableObjectNamespace;
   AUTH_REQUIRED?: string;
   ALLOWED_EMAIL?: string;
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
 }

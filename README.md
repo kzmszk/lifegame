@@ -32,7 +32,7 @@ Phase 1 (タスク管理 MVP) は開発済み．次は Phase 4 (MCP サーバー
 
 ## ローカル開発とデプロイ
 
-ローカルでは、git 管理外の `.dev.vars` に `AUTH_REQUIRED=false` を設定して認証を無効化する。本番の `wrangler.jsonc` は `AUTH_REQUIRED=true` が既定なので、Cloudflare Access の認証ヘッダーと `ALLOWED_EMAIL` が必要になる。
+ローカルでは、git 管理外の `.dev.vars` に `AUTH_REQUIRED=false` を設定して認証を無効化する。本番の `wrangler.jsonc` は `AUTH_REQUIRED=true` が既定なので、Cloudflare Access JWTの検証設定と `ALLOWED_EMAIL` が必要になる。
 
 初回デプロイ時は D1 を作成し、コマンドの出力に含まれる ID で `wrangler.jsonc` の全ゼロの `database_id` を置き換える。
 
@@ -43,6 +43,12 @@ npx wrangler d1 migrations apply lifegame --remote
 npx wrangler secret put ALLOWED_EMAIL
 npx wrangler deploy
 ```
+
+`wrangler.jsonc` の `vars` にある `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` のプレースホルダは、デプロイ前に置き換える。
+`ACCESS_TEAM_DOMAIN` はCloudflare Zero Trustのチームドメイン（Access JWTの `iss`、通常は
+`https://<team-name>.cloudflareaccess.com`）で、`ACCESS_AUD` は Zero Trust > Access controls > Applications
+から対象アプリを開き、Configure > Additional settings の Application Audience (AUD) Tag で確認できる。
+ローカルの認証バイパスではJWT検証を行わないため、`.dev.vars` で `AUTH_REQUIRED=false` にする場合はこれらの値を設定しなくてよい。
 
 `wrangler deploy` は設定済みの `npm run build` を先に実行するため、クリーン checkout でも `public/` 以下の SPA アセットが生成される。
 
@@ -94,14 +100,16 @@ Cloudflare Zero TrustのAccessアプリでは、MCPのOAuthプロトコルをAcc
 - `/csp-report`（承認画面のCSP違反レポートの送信先。ブラウザからの無認証POSTなので除外が必要）
 
 `/authorize` は除外しない。認可画面はAccess配下に残り、Worker側でも
-`Cf-Access-Authenticated-User-Email` と `ALLOWED_EMAIL` を検証する。`/mcp` のタスクデータは
+`Cf-Access-Jwt-Assertion` をJWKSで検証し、JWTの `email` claimと `ALLOWED_EMAIL` を比較する。`/mcp` のタスクデータは
 Cloudflare OAuthのBearer tokenが必須で、DCR・メタデータ・tokenエンドポイントだけが公開される。
 既存の `/api/*` とSPAの保護設定は変更しない。
 
 公開するホスト名は、カスタムドメインを含めてすべてCloudflare Accessアプリの対象にする。
 `wrangler.jsonc` では意図しない `workers.dev` とPreview URLも無効化している。AccessのBYPASSは
-上記のOAuthプロトコル用パスだけに限定すること。WorkerはAccessの前段検証を設計契約としており、
-`Cf-Access-Jwt-Assertion` の署名・issuer・audienceをWorker内で再検証する処理は将来のハードニング課題として残している。
+上記のOAuthプロトコル用パスだけに限定すること。Workerは `Cf-Access-Jwt-Assertion` の署名を
+Cloudflare AccessのJWKSエンドポイント（`<ACCESS_TEAM_DOMAIN>/cdn-cgi/access/certs`）で検証し、issuer、audience、
+有効期限も確認する。認証が有効なとき、ユーザーのメールアドレスはJWTの `email` claimだけを信頼し、
+`Cf-Access-Authenticated-User-Email` ヘッダーは認証に使用しない。
 
 ### 承認画面のCSPを変更するときの注意
 
