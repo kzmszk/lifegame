@@ -1,7 +1,9 @@
-# 引き継ぎメモ (最終更新: 2026-08-04)
+# 引き継ぎメモ (最終更新: 2026-08-05)
 
-Phase 4 (MCP連携) を実装し、本番稼働させた時点の状態と、次に着手すべきことをまとめる。
-設計の背景は [DESIGN.md](DESIGN.md)、セットアップ手順は [../README.md](../README.md) を参照。
+Phase 4 (MCP連携) を本番稼働させ、Phase 5 (Google Calendar 連携) をレビュー対応中の状態と、
+次に着手すべきことをまとめる。
+設計の背景は [DESIGN.md](DESIGN.md)、セットアップ手順は [../README.md](../README.md)、
+Google 側の初期設定は [GCAL_SETUP.md](GCAL_SETUP.md) を参照。
 
 ## 1. 現在地
 
@@ -19,13 +21,26 @@ Phase 4 のタスク分解のうち **1(MCPサーバー + OAuth)、2(ツール�
 | ブリーフィングスキル   | claude.ai に登録済み。アプリのチャットで起動を確認した                             |
 | ブラウザE2E            | Playwright 6本。ローカルの `wrangler dev` に対して実行(3.1 に範囲と穴)             |
 
-ユニットテストは 76 件、E2E は 6 件。デプロイ前は `npm run check`(format / lint / typecheck /
-test / build)を通す。E2E は `npm run e2e` で別立て(サーバーは設定が自動起動する)。
-CI は PR と main への push で `check` と `e2e` を並走させる。
+Phase 5 (Google Calendar 連携) は **PR #17 でレビュー対応中**。`private` カレンダーの予定を
+今日ビューに出し、時刻つきの入力を予定として登録し、`get_daily_summary` に予定と祝日を含める。
 
-**本番は PR #14 マージ後をデプロイした状態のまま**(migration 0002 適用済み)。main はその後
-PR #15 #16 とフック修正で先行しているが、**変更はテストとツールだけで `src/` `web/` に触れて
-いない**ため、本番との差は無い。次に実装が入るまでデプロイは不要。
+ユニットテストは main で 76 件、PR #17 で 111 件。E2E は 6 件。デプロイ前は
+`npm run check`(format / lint / typecheck / test / build)を通す。E2E は `npm run e2e` で
+別立て(サーバーは設定が自動起動する)。CI は PR と main への push で `check` と `e2e` を並走させる。
+
+> [!WARNING]
+> **本番には PR #17 のレビュー対応前がデプロイされている**。この状態では `get_daily_summary` が
+> `tasks:read` だけでカレンダーを返す。同意画面が「lifegame のタスク」としか言っていない
+> 既存の接続が、再同意なしに Google カレンダーを読める状態(PR #17 のレビューで出た P1)。
+> **#17 をマージして再デプロイするまで解消しない**。自分専用で接続先も Claude なので実害は
+> 考えにくいが、放置する理由も無い。
+
+再デプロイ後は **Claude アプリ側で lifegame の接続を繋ぎ直す**こと。`calendar:read` は後から
+足したスコープなので、既存の grant はこれを持たない。繋ぎ直さないとブリーフィングから「予定」の
+節が消えたままになる(仕様どおりの動作なのでエラーは出ない)。手順は
+[../skills/morning-briefing/INSTALL.md](../skills/morning-briefing/INSTALL.md)。
+
+migration 0002 は適用済み。Phase 5 は D1 のスキーマを変えていないので追加の migration は無い。
 未認証では `/` と `/api/*` が 302、`/mcp` が 401、`/.well-known/*` が 200、`/csp-report` は
 POST が 204 で GET は 405。
 
@@ -102,6 +117,17 @@ E2Eの前提と穴:
 
 claude.ai のスケジュールタスクによる自動化。実運用の手応えを見てからで十分。
 
+### 3.3 Phase 5: マージと再デプロイ
+
+PR #17 をマージ → `npx wrangler deploy` → Claude アプリで接続を繋ぎ直す(1.の警告を参照)。
+
+そのあと様子を見て判断すること:
+
+- `get_daily_summary` が Google を2回(予定・祝日)叩くのでブリーフィングが数百ms遅い。
+  気になるなら祝日は日付から計算できるので API を叩かずに済ませられる
+- 予定の更新・削除はアプリに実装していない(Google カレンダー側で行う設計)。
+  実際に不便かどうかは使ってみないと分からない
+
 ## 4. 調べ方(デバッグの入口)
 
 Cloudflare の MCP プラグインがセッションに接続されていれば、Worker一覧・D1へのSQL・KV操作が
@@ -148,6 +174,24 @@ npx wrangler d1 execute lifegame --remote --command "SELECT * FROM revoked_grant
 `/mcp` は 401、`/.well-known/*` は 200 が正しい状態。
 
 ## 5. ハマったところ(再発しやすい順)
+
+**新しいデータ源を足したら、まず「誰に見せてよいか」を決める (Phase 5 の最大の反省)**
+Google Calendar を `get_daily_summary` に足したとき、認可の側をまったく見直さなかった。
+`tasks:read` しか要求していない既存の接続がカレンダーを読める状態になり、PR #17 のレビューで
+P1 として出た。さらにその修正(`calendar:read` 追加)でも `scopesSupported` の更新を忘れ、
+同意画面が要求外のスコープまで説明する不備も続けて出た。**スコープ一覧は1箇所で定義して
+他所は参照する**(現在は `src/oauth.ts` の `SUPPORTED_SCOPES` が唯一の定義で、
+`index.ts` の `scopesSupported` も同意画面の説明もそこから導出している)。
+Phase 2 で健康データを足すときも同じ順序で考えること。
+
+**Google の OAuth 同意画面を「テスト」のままにする**
+refresh token が **7日で失効**する。1週間後に突然、しかも静かに壊れるので原因に辿り着きにくい。
+「本番環境」に上げれば無期限になる(審査は不要)。[GCAL_SETUP.md](GCAL_SETUP.md) に手順がある。
+
+**Calendar API の `singleEvents` 忘れ**
+付けないと繰り返し予定は親イベント1件しか返らない。毎週のピアノやランチ会が今日ビューから
+消えるが、エラーは出ないので「予定が無い日」に見える。`orderBy=startTime` とセットで必須。
+`maxResults` も総件数ではなく**ページサイズ**なので、`nextPageToken` を追わないと黙って切れる。
 
 **マイグレーションの `--remote` 忘れ**
 付け忘れるとローカルDBに適用され、本番は空のまま。症状は「サーバーでエラーが発生しました」。
