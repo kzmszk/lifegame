@@ -156,6 +156,104 @@ describe('listCalendarEvents', () => {
     });
   });
 
+  it('flags an event that began the previous night', async () => {
+    stubFetch(() =>
+      Response.json({
+        items: [
+          {
+            id: 'overnight',
+            summary: '夜通し',
+            // Returned because it overlaps the requested day, not because it
+            // starts on it. 23:30 is yesterday's clock.
+            start: { dateTime: '2026-08-06T23:30:00+09:00' },
+            end: { dateTime: '2026-08-07T01:00:00+09:00' },
+          },
+        ],
+      }),
+    );
+
+    const [event] = await listCalendarEvents(env(), '2026-08-07');
+    expect(event.started_earlier).toBe(true);
+    expect(event.ends_later).toBe(false);
+  });
+
+  it('flags an event that runs past the end of the day', async () => {
+    stubFetch(() =>
+      Response.json({
+        items: [
+          {
+            id: 'late',
+            summary: '深夜作業',
+            start: { dateTime: '2026-08-07T23:00:00+09:00' },
+            end: { dateTime: '2026-08-08T02:00:00+09:00' },
+          },
+        ],
+      }),
+    );
+
+    const [event] = await listCalendarEvents(env(), '2026-08-07');
+    expect(event.started_earlier).toBe(false);
+    expect(event.ends_later).toBe(true);
+  });
+
+  it('leaves both flags clear for an event contained in the day', async () => {
+    stubFetch(() =>
+      Response.json({
+        items: [
+          {
+            id: 'normal',
+            summary: 'ランチ会',
+            start: { dateTime: '2026-08-07T12:30:00+09:00' },
+            end: { dateTime: '2026-08-07T13:00:00+09:00' },
+          },
+        ],
+      }),
+    );
+
+    const [event] = await listCalendarEvents(env(), '2026-08-07');
+    expect(event.started_earlier).toBe(false);
+    expect(event.ends_later).toBe(false);
+  });
+
+  it('does not flag a single-day all-day event as spanning', async () => {
+    stubFetch(() =>
+      Response.json({
+        items: [
+          {
+            id: 'holiday',
+            summary: '山の日',
+            // Google's all-day end date is exclusive.
+            start: { date: '2026-08-11' },
+            end: { date: '2026-08-12' },
+          },
+        ],
+      }),
+    );
+
+    const [event] = await listCalendarEvents(env(), '2026-08-11');
+    expect(event.started_earlier).toBe(false);
+    expect(event.ends_later).toBe(false);
+  });
+
+  it('flags a multi-day all-day event from inside its run', async () => {
+    stubFetch(() =>
+      Response.json({
+        items: [
+          {
+            id: 'trip',
+            summary: '旅行',
+            start: { date: '2026-08-10' },
+            end: { date: '2026-08-13' },
+          },
+        ],
+      }),
+    );
+
+    const [event] = await listCalendarEvents(env(), '2026-08-11');
+    expect(event.started_earlier).toBe(true);
+    expect(event.ends_later).toBe(true);
+  });
+
   it('drops cancelled and declined events', async () => {
     stubFetch(() =>
       Response.json({

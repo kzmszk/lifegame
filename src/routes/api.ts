@@ -222,10 +222,10 @@ api.post('/calendar/events', async (c) => {
   if (hasOwn(body, 'end_time') && body.end_time !== null) {
     if (typeof body.end_time !== 'string' || !validTime(body.end_time))
       return error(c, 'end_time は HH:MM 形式で指定してください', 400);
-    // Lexical comparison is exact for zero-padded HH:MM, and rejecting this here
-    // saves a round trip to an API that would refuse it anyway.
-    if (body.end_time <= body.start_time)
-      return error(c, 'end_time は start_time より後にしてください', 400);
+    // An end at or before the start means the event runs past midnight, the same
+    // reading the omitted-end_time path already takes when the default hour
+    // crosses over. Rejecting it here would make 23:30-00:30 the one overnight
+    // duration that cannot be expressed.
     endTime = body.end_time;
   }
 

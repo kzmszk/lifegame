@@ -59,6 +59,13 @@ export interface CalendarEvent {
   end: string;
   start_time: string | null;
   end_time: string | null;
+  /**
+   * The event began before the requested day and is already under way. Rendering
+   * `start_time` on its own would announce it as starting tonight.
+   */
+  started_earlier: boolean;
+  /** The event runs past the end of the requested day. */
+  ends_later: boolean;
   location: string | null;
   note: string;
   html_link: string;

@@ -328,6 +328,19 @@ export default function App() {
   );
 }
 
+/**
+ * Google returns anything overlapping the day, so an event may already be under
+ * way or run past midnight. Showing a bare start time would announce something
+ * that began last night as starting tonight.
+ */
+function eventTimeLabel(event: CalendarEvent): string {
+  if (event.all_day || (event.started_earlier && event.ends_later))
+    return '終日';
+  if (event.started_earlier) return `〜${event.end_time}`;
+  if (event.ends_later) return `${event.start_time}〜`;
+  return event.start_time ?? '';
+}
+
 function CalendarEventList({
   events,
   failed,
@@ -355,9 +368,7 @@ function CalendarEventList({
       <h2 className="event-list-title">予定</h2>
       {events.map((event) => (
         <article className="event-card" key={event.id}>
-          <span className="event-time">
-            {event.all_day ? '終日' : event.start_time}
-          </span>
+          <span className="event-time">{eventTimeLabel(event)}</span>
           <div className="event-main">
             <p className="event-title">{event.title}</p>
             {event.location && (

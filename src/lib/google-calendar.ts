@@ -145,12 +145,30 @@ async function callGoogle(
   return body;
 }
 
-function toCalendarEvent(event: GoogleEvent): CalendarEvent | null {
+/**
+ * Flatten one event against the day it was requested for. The API returns
+ * anything that *overlaps* the range, so an event can begin before the day or
+ * run past it; `start_time` alone would then read as "starts tonight" for
+ * something already under way.
+ */
+function toCalendarEvent(
+  event: GoogleEvent,
+  range: { timeMin: string; timeMax: string },
+): CalendarEvent | null {
   const start = event.start?.dateTime ?? event.start?.date;
   const end = event.end?.dateTime ?? event.end?.date;
   if (!event.id || !start || !end) return null;
   // All-day events carry `date` instead of `dateTime`, and have no wall-clock time.
   const allDay = event.start?.dateTime === undefined;
+  // All-day bounds are plain dates compared as strings, and Google's end date is
+  // exclusive, so it lines up with the exclusive timeMax.
+  const startedEarlier = allDay
+    ? start < range.timeMin.slice(0, 10)
+    : Date.parse(start) < Date.parse(range.timeMin);
+  const endsLater = allDay
+    ? end > range.timeMax.slice(0, 10)
+    : Date.parse(end) > Date.parse(range.timeMax);
+
   return {
     id: event.id,
     title: event.summary?.trim() || '(タイトルなし)',
@@ -159,6 +177,8 @@ function toCalendarEvent(event: GoogleEvent): CalendarEvent | null {
     end,
     start_time: allDay ? null : tokyoTimeOfDay(start),
     end_time: allDay ? null : tokyoTimeOfDay(end),
+    started_earlier: startedEarlier,
+    ends_later: endsLater,
     location: event.location ?? null,
     note: event.description ?? '',
     html_link: event.htmlLink ?? '',
@@ -207,7 +227,7 @@ async function listEventsOn(
     events.push(
       ...items
         .filter((event) => event.status !== 'cancelled' && !isDeclined(event))
-        .map(toCalendarEvent)
+        .map((event) => toCalendarEvent(event, { timeMin, timeMax }))
         .filter((event): event is CalendarEvent => event !== null),
     );
 
@@ -239,13 +259,21 @@ export async function createCalendarEvent(
   env: Env,
   input: CalendarEventCreateInput,
 ): Promise<CalendarEvent> {
-  const end = input.end_time
-    ? { date: input.date, time: input.end_time }
-    : shiftTokyoWallClock(
+  // An end at or before the start belongs to the next day; Google rejects an end
+  // that precedes the start, and 23:30-00:30 is a perfectly ordinary evening.
+  const end = !input.end_time
+    ? shiftTokyoWallClock(
         input.date,
         input.start_time,
         DEFAULT_DURATION_MINUTES,
-      );
+      )
+    : {
+        date:
+          input.end_time <= input.start_time
+            ? shiftTokyoWallClock(input.date, '00:00', 24 * 60).date
+            : input.date,
+        time: input.end_time,
+      };
 
   const url = `${API_BASE}/calendars/${encodeURIComponent(CALENDAR_ID)}/events`;
   const body = await callGoogle(env, url, {
@@ -263,7 +291,12 @@ export async function createCalendarEvent(
     }),
   });
 
-  const created = toCalendarEvent(body as GoogleEvent);
+  // Framed against the day it was created for, so an overnight event comes back
+  // flagged the same way the listing would flag it.
+  const created = toCalendarEvent(
+    body as GoogleEvent,
+    tokyoDayRangeIso(input.date),
+  );
   if (!created) {
     throw new GoogleCalendarError(
       'upstream',

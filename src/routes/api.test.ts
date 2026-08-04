@@ -697,7 +697,37 @@ describe('calendar endpoints', () => {
     expect(response.status).toBe(500);
   });
 
-  it('rejects an end time that is not after the start', async () => {
+  it('carries an explicit end time past midnight into the next day', async () => {
+    const calls = stubGoogle(() =>
+      Response.json({
+        id: 'created',
+        summary: '夜更かし',
+        start: { dateTime: '2026-08-05T23:30:00+09:00' },
+        end: { dateTime: '2026-08-06T02:00:00+09:00' },
+      }),
+    );
+
+    const response = await app.request(
+      '/api/calendar/events',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: '夜更かし',
+          date: '2026-08-05',
+          start_time: '23:30',
+          end_time: '02:00',
+        }),
+      },
+      calendarEnv(),
+    );
+
+    expect(response.status).toBe(201);
+    // 23:30-02:00 is an ordinary evening, not an invalid interval.
+    const sent = JSON.parse(String(calls[0].init?.body));
+    expect(sent.end.dateTime).toBe('2026-08-06T02:00:00');
+  });
+
+  it('still rejects a malformed end time', async () => {
     const calls = stubGoogle(() => Response.json({ id: 'x' }));
     const response = await app.request(
       '/api/calendar/events',
@@ -707,7 +737,7 @@ describe('calendar endpoints', () => {
           title: '会議',
           date: '2026-08-05',
           start_time: '15:00',
-          end_time: '15:00',
+          end_time: '25:00',
         }),
       },
       calendarEnv(),
