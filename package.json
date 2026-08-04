@@ -15,6 +15,9 @@
     "lint:fix": "oxlint . --fix --deny-warnings",
     "prepare": "husky",
     "test": "vitest run",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:server": "wrangler d1 migrations apply lifegame --local && npm run build && wrangler dev --port 8787 --var AUTH_REQUIRED:false",
     "typecheck": "tsc --noEmit",
     "skill:zip": "mkdir -p dist && rm -f dist/morning-briefing.zip && cd skills && zip -qr ../dist/morning-briefing.zip morning-briefing -x 'morning-briefing/INSTALL.md'"
   },
@@ -40,6 +43,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260730.1",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.13.10",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",

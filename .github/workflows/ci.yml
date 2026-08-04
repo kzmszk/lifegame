@@ -45,3 +45,57 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Keyed on the resolved Playwright version rather than the lockfile hash,
+      # so an unrelated dependency bump does not throw away the ~100MB download.
+      - name: Resolve Playwright version
+        id: playwright
+        run: |
+          echo "version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright browser cache
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # No --with-deps: on a cache hit the apt work cost 24s, against 23s for the
+      # whole uncached install, which made the cache a net loss. The ubuntu-latest
+      # image already carries the libraries chromium links against, so this only
+      # fetches the binary. If a future runner image drops one, chromium fails to
+      # launch outright rather than flaking, and --with-deps comes back.
+      - name: Install Playwright browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      # The suite starts its own wrangler dev against a local D1 file, so no
+      # Cloudflare credentials are involved. Access is off there because
+      # e2e:server passes AUTH_REQUIRED=false.
+      - name: End-to-end tests
+        run: npm run e2e
+
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
