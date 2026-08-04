@@ -62,8 +62,10 @@
   // Production is authenticated by default. Local development overrides this in .dev.vars.
   "vars": {
     "AUTH_REQUIRED": "true",
-    // Replace both placeholders with the values from the protected Access application before deploying.
-    "ACCESS_TEAM_DOMAIN": "REPLACE_BEFORE_DEPLOY_ACCESS_TEAM_DOMAIN",
-    "ACCESS_AUD": "REPLACE_BEFORE_DEPLOY_ACCESS_AUD",
+    // Identifiers rather than secrets, so they live here like the D1 and KV ids.
+    // ACCESS_AUD is the tag of the application covering the whole hostname, not the
+    // bypass one: the wrong tag verifies cleanly while accepting another app's tokens.
+    "ACCESS_TEAM_DOMAIN": "https://kazumasa.cloudflareaccess.com",
+    "ACCESS_AUD": "738080865fb93ecce36448d159410753241e03b98f94da95d3fbefdd0f9a1a03",
   },
 }
