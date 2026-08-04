@@ -2,6 +2,11 @@ import { defineConfig, devices } from '@playwright/test';
 
 const PORT = 8787;
 const baseURL = `http://127.0.0.1:${PORT}`;
+// wrangler dev takes the request host from the custom domain in `routes`, so the
+// worker sees lifegame.tachicoma.com unless e2e:server passes --host. That host
+// reaches the consent page as the form action, and `form-action 'self'` then
+// blocks the approval on an origin mismatch. Keep --host in step with baseURL,
+// port included: --host 127.0.0.1 alone resolves to port 80 and still mismatches.
 
 export default defineConfig({
   testDir: './e2e',
