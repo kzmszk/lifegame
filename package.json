@@ -26,10 +26,10 @@
   },
   "lint-staged": {
     "*.{js,ts,tsx}": [
-      "oxfmt",
+      "oxfmt --no-error-on-unmatched-pattern",
       "oxlint --fix --deny-warnings --no-error-on-unmatched-pattern"
     ],
-    "*.{css,html,json,jsonc,md,yaml,yml}": "oxfmt"
+    "*.{css,html,json,jsonc,md,yaml,yml}": "oxfmt --no-error-on-unmatched-pattern"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.8.2",
