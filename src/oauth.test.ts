@@ -67,15 +67,27 @@ describe('OAuth authorization policy', () => {
     ).toBe('unauthorized_client');
   });
 
-  it('rejects unknown scopes and defaults omitted scope to both task scopes', () => {
+  it('rejects unknown scopes and defaults omitted scope to every supported scope', () => {
     expect(
       validateAuthorizationRequest(
         authorizationRequest({ scope: ['tasks:admin'] }),
         client(),
       )?.error,
     ).toBe('invalid_scope');
-    expect(grantedScopesForRequest([])).toEqual(['tasks:read', 'tasks:write']);
+    // Omitting scope stays "everything supported", and the consent page
+    // enumerates what that covers, so calendar access is still shown before
+    // approval rather than folded in silently.
+    expect(grantedScopesForRequest([])).toEqual([
+      'tasks:read',
+      'tasks:write',
+      'calendar:read',
+    ]);
     expect(grantedScopesForRequest(['tasks:read'])).toEqual(['tasks:read']);
+    // A grant issued before calendar:read existed carries only what it was given.
+    expect(grantedScopesForRequest(['tasks:read', 'tasks:write'])).toEqual([
+      'tasks:read',
+      'tasks:write',
+    ]);
   });
 });
 
@@ -197,6 +209,41 @@ describe('OAuth consent CSRF protection', () => {
     expect(await page.text()).toContain(
       'form-action &#39;self&#39; https://client.example;',
     );
+  });
+
+  const consentHtmlForScope = async (scope: string[]): Promise<string> => {
+    const env = makeEnv({ count: 0 });
+    (
+      env as unknown as {
+        OAUTH_PROVIDER: { parseAuthRequest: () => Promise<AuthRequest> };
+      }
+    ).OAUTH_PROVIDER.parseAuthRequest = async () =>
+      authorizationRequest({ scope });
+    const page = await fetchAuthorize(
+      new Request('https://lifegame.example/authorize'),
+      env,
+    );
+    return page.text();
+  };
+
+  it('explains every scope it is about to grant', async () => {
+    // Omitted scope grants the full set, so the full set must be explained.
+    const html = await consentHtmlForScope([]);
+
+    for (const scope of ['tasks:read', 'tasks:write', 'calendar:read']) {
+      expect(html).toContain(`<code>${scope}</code>`);
+    }
+    expect(html).toContain('Googleカレンダー');
+  });
+
+  it('describes only the requested scopes, not the whole catalogue', async () => {
+    const html = await consentHtmlForScope(['tasks:read']);
+
+    expect(html).toContain('<code>tasks:read</code>');
+    // Listing these would overstate what the client actually asked for.
+    expect(html).not.toContain('<code>tasks:write</code>');
+    expect(html).not.toContain('<code>calendar:read</code>');
+    expect(html).not.toContain('Googleカレンダー');
   });
 
   it('allows a custom-scheme callback by scheme in form-action', async () => {

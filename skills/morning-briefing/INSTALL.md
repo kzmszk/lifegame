@@ -9,6 +9,19 @@ MCP サーバーの URL は末尾の `/mcp` まで含める。
 https://lifegame.tachicoma.com/mcp
 ```
 
+## すでに接続済みの場合は繋ぎ直す
+
+Google Calendar 連携で `calendar:read` スコープが増えた。**それ以前に作った接続はこの
+スコープを持たない**ので、繋いだままではブリーフィングに「予定」が一切出てこない
+(`get_daily_summary` の応答から予定関連のキーごと消える。仕様どおりの動作)。
+
+一度切断してから接続し直し、同意画面で `calendar:read` を含めて許可する。
+
+- claude.ai: 設定 → コネクタ → lifegame を削除して再登録
+- Claude Code / Codex CLI: `codex mcp login lifegame` などで再認可する
+
+lifegame 側の接続一覧(アプリの設定画面)からも切断できる。
+
 ## Claude アプリ / claude.ai
 
 1. ZIP を作る
@@ -58,4 +71,7 @@ codex mcp login lifegame
 ## 動作確認
 
 接続後、「今日のブリーフィングをして」と話しかける。`get_daily_summary` が1回だけ呼ばれ、
-SKILL.md の6セクション構成で返れば正しい。タスクが1件も無いときは各セクションが「なし」になる。
+SKILL.md の構成で返れば正しい。タスクが1件も無いときは各セクションが「なし」になる。
+
+「予定」の節がまるごと出てこない場合は、`calendar:read` が許可されていない。
+上の「すでに接続済みの場合は繋ぎ直す」を実施する。

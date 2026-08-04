@@ -6,8 +6,23 @@ import type { Env } from './env';
 import { getAccessUser, isAccessAuthError } from './lib/access';
 import { app } from './app';
 
-export const SUPPORTED_SCOPES = ['tasks:read', 'tasks:write'] as const;
+// calendar:read is separate from tasks:read because Google Calendar is a
+// different data source with a different owner. Grants issued before it existed
+// carry only the task scopes, so they keep seeing tasks only until reconnected.
+export const SUPPORTED_SCOPES = [
+  'tasks:read',
+  'tasks:write',
+  'calendar:read',
+] as const;
 type SupportedScope = (typeof SUPPORTED_SCOPES)[number];
+
+// Typed as a total record so a new scope cannot reach the consent page without
+// a description: approving a permission nobody explained is the failure mode.
+const SCOPE_DESCRIPTIONS: Record<SupportedScope, string> = {
+  'tasks:read': 'lifegameのタスクを読む',
+  'tasks:write': 'lifegameのタスクを追加・変更・削除する',
+  'calendar:read': 'Googleカレンダー（private）の予定と祝日を読む',
+};
 
 const CONSENT_CSRF_COOKIE_PREFIX = '__Host-lifegame-consent-';
 const CONSENT_CSRF_MAX_AGE = 600;
@@ -347,10 +362,19 @@ function consentPage(
   const csp = consentCsp(oauthRequest.redirectUri);
   const flowId = crypto.randomUUID();
   const csrfToken = crypto.randomUUID();
+  // Describe what approving actually grants, not the whole catalogue. A client
+  // asking for tasks:read only must not be presented as asking for the calendar.
+  const grantedScopes = grantedScopesForRequest(oauthRequest.scope);
   const requestedScopes =
     oauthRequest.scope.length > 0
       ? oauthRequest.scope.join(', ')
-      : '省略（tasks:read と tasks:write の両方）';
+      : `省略（${grantedScopes.join(' と ')} のすべて）`;
+  const scopeDescriptions = grantedScopes
+    .map(
+      (scope) =>
+        `<li><code>${escapeHtml(scope)}</code> — ${escapeHtml(SCOPE_DESCRIPTIONS[scope])}</li>`,
+    )
+    .join('');
   const clientName = client.clientName || oauthRequest.clientId;
   const redirectUris = client.redirectUris
     .map((uri) => `<li>${escapeHtml(uri)}</li>`)
@@ -363,8 +387,9 @@ function consentPage(
   </head>
   <body><main>
     <h1>lifegameへの接続</h1>
-    <p><strong>${escapeHtml(clientName)}</strong>（client_id: <code>${escapeHtml(client.clientId)}</code>）が、あなたのlifegameタスクにアクセスしようとしています。</p>
+    <p><strong>${escapeHtml(clientName)}</strong>（client_id: <code>${escapeHtml(client.clientId)}</code>）が、あなたのlifegameのデータにアクセスしようとしています。</p>
     <p>要求された権限: ${escapeHtml(requestedScopes)}</p>
+    <ul>${scopeDescriptions}</ul>
     <p>登録済みのリダイレクトURI:</p><ul>${redirectUris}</ul>
     <form method="post" action="${escapeHtml(action.toString())}">
       <input type="hidden" name="flow_id" value="${escapeHtml(flowId)}">

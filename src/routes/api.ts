@@ -11,15 +11,26 @@ import {
 } from '../db/tasks';
 import { parse } from '../lib/parse';
 import { getAccessUser, isAccessAuthError } from '../lib/access';
-import { tokyoDayBounds } from '../lib/time';
+import { tokyoDayBounds, tokyoToday } from '../lib/time';
 import {
   fieldsFromBody,
+  hasOwn,
   parseId,
   parseStatus,
   validateFields,
+  validDate,
+  validTime,
 } from '../lib/task-validation';
 import { markGrantRevoked, revokedGrantIds } from '../lib/revocation';
+import {
+  createCalendarEvent,
+  GoogleCalendarError,
+  listCalendarEvents,
+} from '../lib/google-calendar';
 import type {
+  CalendarEventCreateInput,
+  CalendarEventResponse,
+  CalendarEventsResponse,
   Connection,
   ErrorResponse,
   TaskCreateInput,
@@ -35,7 +46,7 @@ const MAX_GRANT_ID_LENGTH = 256;
 function error(
   c: Context<{ Bindings: Env }>,
   message: string,
-  status: 400 | 401 | 403 | 404 | 405 | 500,
+  status: 400 | 401 | 403 | 404 | 405 | 500 | 502,
 ) {
   return c.json<ErrorResponse>({ error: message }, status);
 }
@@ -175,6 +186,64 @@ api.delete('/tasks/:id', async (c) => {
     : error(c, 'タスクが見つかりません', 404);
 });
 
+function calendarError(c: Context<{ Bindings: Env }>, thrown: unknown) {
+  if (!(thrown instanceof GoogleCalendarError)) throw thrown;
+  console.warn(`Google Calendar 呼び出しに失敗: ${thrown.message}`);
+  // Config and credential problems are ours to fix, so they stay 500. An upstream
+  // fault is reported as 502 so it reads as "Google is down", not "the app broke".
+  return error(c, thrown.message, thrown.kind === 'upstream' ? 502 : 500);
+}
+
+api.get('/calendar/events', async (c) => {
+  const date = c.req.query('date') ?? tokyoToday();
+  if (!validDate(date))
+    return error(c, 'date は YYYY-MM-DD 形式で指定してください', 400);
+  try {
+    const events = await listCalendarEvents(c.env, date);
+    return c.json<CalendarEventsResponse>({ date, events });
+  } catch (thrown) {
+    return calendarError(c, thrown);
+  }
+});
+
+api.post('/calendar/events', async (c) => {
+  const body = await readBody(c);
+  if (!body) return error(c, 'JSON オブジェクトを指定してください', 400);
+  if (typeof body.title !== 'string' || body.title.trim() === '')
+    return error(c, 'title は必須です', 400);
+  if (typeof body.date !== 'string' || !validDate(body.date))
+    return error(c, 'date は YYYY-MM-DD 形式で指定してください', 400);
+  if (typeof body.start_time !== 'string' || !validTime(body.start_time))
+    return error(c, 'start_time は HH:MM 形式で指定してください', 400);
+  if (hasOwn(body, 'note') && typeof body.note !== 'string')
+    return error(c, 'note は文字列で指定してください', 400);
+
+  let endTime: string | undefined;
+  if (hasOwn(body, 'end_time') && body.end_time !== null) {
+    if (typeof body.end_time !== 'string' || !validTime(body.end_time))
+      return error(c, 'end_time は HH:MM 形式で指定してください', 400);
+    // An end at or before the start means the event runs past midnight, the same
+    // reading the omitted-end_time path already takes when the default hour
+    // crosses over. Rejecting it here would make 23:30-00:30 the one overnight
+    // duration that cannot be expressed.
+    endTime = body.end_time;
+  }
+
+  const input: CalendarEventCreateInput = {
+    title: body.title.trim(),
+    date: body.date,
+    start_time: body.start_time,
+    ...(endTime ? { end_time: endTime } : {}),
+    ...(typeof body.note === 'string' ? { note: body.note } : {}),
+  };
+  try {
+    const event = await createCalendarEvent(c.env, input);
+    return c.json<CalendarEventResponse>({ event }, 201);
+  } catch (thrown) {
+    return calendarError(c, thrown);
+  }
+});
+
 function clientNameForGrant(grant: GrantSummary): string {
   if (
     typeof grant.metadata === 'object' &&
@@ -308,9 +377,17 @@ function knownApiPath(path: string): boolean {
     path === '/tasks/parse' ||
     path === '/connections' ||
     path === '/connections/' ||
+    path === '/calendar/events' ||
     /^\/(tasks|connections)\/[^/]+$/.test(path)
   );
 }
+
+const staticPathMethods: Record<string, string> = {
+  '/tasks': 'GET, POST',
+  '/tasks/parse': 'POST',
+  '/connections': 'GET',
+  '/calendar/events': 'GET, POST',
+};
 
 // This route is copied to the parent app by app.route(), so unknown /api/* requests
 // never fall through to the SPA asset handler.
@@ -319,15 +396,8 @@ api.all('*', (c) => {
   if (knownApiPath(path)) {
     c.header(
       'Allow',
-      path === '/tasks'
-        ? 'GET, POST'
-        : path === '/tasks/parse'
-          ? 'POST'
-          : path === '/connections'
-            ? 'GET'
-            : path.startsWith('/connections/')
-              ? 'DELETE'
-              : 'GET, PATCH, DELETE',
+      staticPathMethods[path] ??
+        (path.startsWith('/connections/') ? 'DELETE' : 'GET, PATCH, DELETE'),
     );
     return error(c, 'このAPIメソッドは対応していません', 405);
   }

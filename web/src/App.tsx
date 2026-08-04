@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type {
+  CalendarEvent,
   Connection,
   Task,
   TaskDraft,
@@ -8,7 +9,9 @@ import type {
   TaskView,
 } from '../../src/shared/types';
 import {
+  createCalendarEvent,
   createTask,
+  fetchCalendarEvents,
   fetchConnections,
   fetchTask,
   fetchTasks,
@@ -22,6 +25,15 @@ type Route =
   | { kind: 'list'; view: TaskView }
   | { kind: 'detail'; id: number; from: TaskView }
   | { kind: 'settings' };
+
+/** Where a confirmed draft is written: the task list, or Google Calendar. */
+type DraftKind = 'task' | 'event';
+
+interface PendingDraft {
+  draft: TaskDraft;
+  /** Voice drafts get a different hint, since misheard text is the usual worry. */
+  source: 'voice' | 'text';
+}
 
 function isTaskView(value: string | null): value is TaskView {
   return value === 'today' || value === 'inbox' || value === 'all';
@@ -76,12 +88,15 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, showToast] = useToast();
-  const [draft, setDraft] = useState<TaskDraft | null>(null);
+  const [draft, setDraft] = useState<PendingDraft | null>(null);
   const route = routeForPath(path);
   const listView = route.kind === 'list' ? route.view : null;
   const routeRef = useRef<Route>(route);
   routeRef.current = route;
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [eventsFailed, setEventsFailed] = useState(false);
   const listRequestGeneration = useRef(0);
+  const eventRequestGeneration = useRef(0);
   const updatingTaskIdsRef = useRef(new Set<number>());
   const [updatingTaskIds, setUpdatingTaskIds] = useState<Set<number>>(
     new Set(),
@@ -118,9 +133,44 @@ export default function App() {
     if (listView !== null) void loadList(listView);
   }, [listView, loadList]);
 
+  // Calendar events load on their own request so a slow or broken Google call
+  // never delays or blanks the task list, which works without them.
+  const loadEvents = useCallback(async () => {
+    const generation = ++eventRequestGeneration.current;
+    setEventsFailed(false);
+    try {
+      const nextEvents = await fetchCalendarEvents();
+      if (generation !== eventRequestGeneration.current) return;
+      setEvents(nextEvents);
+    } catch {
+      if (generation !== eventRequestGeneration.current) return;
+      setEvents([]);
+      setEventsFailed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (listView !== 'today') {
+      // Bump the generation so an in-flight response cannot land on another view.
+      eventRequestGeneration.current += 1;
+      setEvents([]);
+      setEventsFailed(false);
+      return;
+    }
+    void loadEvents();
+  }, [listView, loadEvents]);
+
   const handleCreate = useCallback(
     async (text: string) => {
-      const task = await createTask({ text });
+      const parsed = await parseTask(text);
+      // A stated time means an appointment, which belongs on the calendar rather
+      // than in the task list. Writing to Google is the harder side to undo from
+      // here, so that branch always stops for confirmation; plain tasks do not.
+      if (parsed.due_time) {
+        setDraft({ draft: parsed, source: 'text' });
+        return;
+      }
+      const task = await createTask(parsed);
       const currentRoute = routeRef.current;
       if (currentRoute.kind === 'list') await loadList(currentRoute.view);
       showToast(`「${task.title}」を追加しました`);
@@ -129,8 +179,8 @@ export default function App() {
   );
 
   const handleVoice = useCallback(async (text: string) => {
-    const draft = await parseTask(text);
-    setDraft(draft);
+    // Speech recognition mishears, so voice always confirms, time or not.
+    setDraft({ draft: await parseTask(text), source: 'voice' });
   }, []);
 
   const handleToggle = useCallback(
@@ -164,8 +214,26 @@ export default function App() {
   );
 
   const confirmDraft = useCallback(
-    async (nextDraft: TaskDraft) => {
+    async (nextDraft: TaskDraft, kind: DraftKind) => {
       try {
+        if (kind === 'event') {
+          if (!nextDraft.due_date || !nextDraft.due_time) {
+            showToast('予定にするには日付と時刻が必要です');
+            return;
+          }
+          await createCalendarEvent({
+            title: nextDraft.title,
+            date: nextDraft.due_date,
+            start_time: nextDraft.due_time,
+            note: nextDraft.note,
+          });
+          setDraft(null);
+          // The new event may fall on today, and refetching is cheaper than
+          // reasoning about whether it does.
+          if (routeRef.current.kind === 'list') await loadEvents();
+          showToast('予定を追加しました');
+          return;
+        }
         await createTask(nextDraft);
         setDraft(null);
         const currentRoute = routeRef.current;
@@ -173,11 +241,11 @@ export default function App() {
         showToast('タスクを追加しました');
       } catch (error) {
         showToast(
-          error instanceof Error ? error.message : 'タスクの追加に失敗しました',
+          error instanceof Error ? error.message : '追加に失敗しました',
         );
       }
     },
-    [loadList, showToast],
+    [loadEvents, loadList, showToast],
   );
 
   return (
@@ -204,6 +272,13 @@ export default function App() {
               onVoiceText={handleVoice}
               onError={showToast}
             />
+            {route.view === 'today' && (
+              <CalendarEventList
+                events={events}
+                failed={eventsFailed}
+                onRetry={() => void loadEvents()}
+              />
+            )}
             {loading ? (
               <Loading />
             ) : loadError ? (
@@ -238,7 +313,8 @@ export default function App() {
       {route.kind === 'list' && <BottomTabs view={route.view} />}
       {draft && (
         <DraftDialog
-          draft={draft}
+          draft={draft.draft}
+          source={draft.source}
           onCancel={() => setDraft(null)}
           onConfirm={confirmDraft}
         />
@@ -249,6 +325,59 @@ export default function App() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Google returns anything overlapping the day, so an event may already be under
+ * way or run past midnight. Showing a bare start time would announce something
+ * that began last night as starting tonight.
+ */
+function eventTimeLabel(event: CalendarEvent): string {
+  if (event.all_day || (event.started_earlier && event.ends_later))
+    return '終日';
+  if (event.started_earlier) return `〜${event.end_time}`;
+  if (event.ends_later) return `${event.start_time}〜`;
+  return event.start_time ?? '';
+}
+
+function CalendarEventList({
+  events,
+  failed,
+  onRetry,
+}: {
+  events: CalendarEvent[];
+  failed: boolean;
+  onRetry: () => void;
+}) {
+  if (failed) {
+    return (
+      <div className="notice calendar-notice">
+        <span>予定を取得できませんでした</span>
+        <button type="button" onClick={onRetry}>
+          再試行
+        </button>
+      </div>
+    );
+  }
+  // Nothing to show while loading or on a free day; an empty box would just be noise.
+  if (events.length === 0) return null;
+
+  return (
+    <section className="event-list" aria-label="今日の予定">
+      <h2 className="event-list-title">予定</h2>
+      {events.map((event) => (
+        <article className="event-card" key={event.id}>
+          <span className="event-time">{eventTimeLabel(event)}</span>
+          <div className="event-main">
+            <p className="event-title">{event.title}</p>
+            {event.location && (
+              <p className="event-location">{event.location}</p>
+            )}
+          </div>
+        </article>
+      ))}
+    </section>
   );
 }
 
@@ -852,24 +981,32 @@ function TaskDetail({
 
 function DraftDialog({
   draft,
+  source,
   onCancel,
   onConfirm,
 }: {
   draft: TaskDraft;
+  source: 'voice' | 'text';
   onCancel: () => void;
-  onConfirm: (draft: TaskDraft) => Promise<void>;
+  onConfirm: (draft: TaskDraft, kind: DraftKind) => Promise<void>;
 }) {
   const [value, setValue] = useState(draft);
+  // A stated time is what distinguishes an appointment from a task, so it picks
+  // the default. The toggle is the escape hatch for the times it guesses wrong.
+  const [kind, setKind] = useState<DraftKind>(
+    draft.due_time ? 'event' : 'task',
+  );
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const set = <K extends keyof TaskDraft>(key: K, next: TaskDraft[K]) =>
     setValue((current) => ({ ...current, [key]: next }));
+  const incomplete = kind === 'event' && (!value.due_date || !value.due_time);
   const confirm = async () => {
-    if (!value.title.trim() || savingRef.current) return;
+    if (!value.title.trim() || incomplete || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     try {
-      await onConfirm(value);
+      await onConfirm(value, kind);
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -885,7 +1022,9 @@ function DraftDialog({
       >
         <div className="modal-heading">
           <div>
-            <p className="eyebrow">VOICE DRAFT</p>
+            <p className="eyebrow">
+              {source === 'voice' ? 'VOICE' : 'QUICK'} DRAFT
+            </p>
             <h2 id="draft-title">内容を確認</h2>
           </div>
           <button
@@ -898,8 +1037,30 @@ function DraftDialog({
           </button>
         </div>
         <p className="draft-hint">
-          音声から読み取った内容です。必要ならここで直せます。
+          {source === 'voice'
+            ? '音声から読み取った内容です。必要ならここで直せます。'
+            : '時刻があるので予定として登録します。必要ならここで直せます。'}
         </p>
+        <div className="kind-switch" role="group" aria-label="登録先">
+          <button
+            type="button"
+            className={kind === 'task' ? 'is-active' : ''}
+            aria-pressed={kind === 'task'}
+            disabled={saving}
+            onClick={() => setKind('task')}
+          >
+            タスク
+          </button>
+          <button
+            type="button"
+            className={kind === 'event' ? 'is-active' : ''}
+            aria-pressed={kind === 'event'}
+            disabled={saving}
+            onClick={() => setKind('event')}
+          >
+            予定
+          </button>
+        </div>
         <label>
           <span>タイトル</span>
           <input
@@ -910,7 +1071,7 @@ function DraftDialog({
         </label>
         <div className="form-row">
           <label>
-            <span>期限</span>
+            <span>{kind === 'event' ? '日付' : '期限'}</span>
             <input
               type="date"
               value={value.due_date ?? ''}
@@ -918,7 +1079,7 @@ function DraftDialog({
             />
           </label>
           <label>
-            <span>時刻</span>
+            <span>{kind === 'event' ? '開始時刻' : '時刻'}</span>
             <input
               type="time"
               value={value.due_time ?? ''}
@@ -926,6 +1087,11 @@ function DraftDialog({
             />
           </label>
         </div>
+        {incomplete && (
+          <p className="draft-warning">
+            予定にするには日付と時刻の両方が必要です。
+          </p>
+        )}
         <label>
           <span>メモ</span>
           <textarea
@@ -934,14 +1100,19 @@ function DraftDialog({
             rows={3}
           />
         </label>
-        <label className="switch-row">
-          <span>優先度を上げる</span>
-          <input
-            type="checkbox"
-            checked={value.priority === 1}
-            onChange={(event) => set('priority', event.target.checked ? 1 : 0)}
-          />
-        </label>
+        {/* Priority is a task-list concept; Google Calendar has nothing to map it to. */}
+        {kind === 'task' && (
+          <label className="switch-row">
+            <span>優先度を上げる</span>
+            <input
+              type="checkbox"
+              checked={value.priority === 1}
+              onChange={(event) =>
+                set('priority', event.target.checked ? 1 : 0)
+              }
+            />
+          </label>
+        )}
         <div className="modal-actions">
           <button
             className="button secondary"
@@ -953,9 +1124,13 @@ function DraftDialog({
           <button
             className="button primary"
             onClick={() => void confirm()}
-            disabled={saving || !value.title.trim()}
+            disabled={saving || !value.title.trim() || incomplete}
           >
-            {saving ? '追加中…' : 'この内容で追加'}
+            {saving
+              ? '追加中…'
+              : kind === 'event'
+                ? 'この内容で予定を追加'
+                : 'この内容で追加'}
           </button>
         </div>
       </div>

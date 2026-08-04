@@ -132,6 +132,93 @@ button {
   display: grid;
   gap: 10px;
 }
+.kind-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 4px;
+  background: #f2ede3;
+  border-radius: 12px;
+}
+.kind-switch button {
+  padding: 9px 0;
+  /* The UA default border and grey fill would read as two raised buttons rather
+     than one selected segment, so both are cleared before the active state. */
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.kind-switch button.is-active {
+  background: var(--paper);
+  box-shadow: 0 1px 3px rgb(36 60 58 / 12%);
+  color: var(--green);
+}
+.draft-warning {
+  margin: -6px 0 14px;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+.event-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.event-list-title {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+.event-card {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 11px 13px;
+  background: #edf5f0;
+  border: 1px solid #d8e7de;
+  border-radius: 13px;
+}
+.event-time {
+  flex: 0 0 auto;
+  min-width: 3.1em;
+  color: var(--green);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.event-main {
+  min-width: 0;
+}
+.event-title {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.94rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.event-location {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.calendar-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.calendar-notice button {
+  flex: 0 0 auto;
+  color: #8a6516;
+  font-size: 0.8rem;
+  text-decoration: underline;
+}
 .notice {
   margin: 0 0 14px;
   padding: 11px 14px;
