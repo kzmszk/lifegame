@@ -12,6 +12,6 @@ export class LifegameMcp extends McpAgent<Env, unknown, McpAuthProps> {
   server = new McpServer({ name: 'lifegame', version: '1.0.0' });
 
   async init(): Promise<void> {
-    registerLifegameTools(this.server, this.env.DB, () => this.props);
+    registerLifegameTools(this.server, this.env, () => this.props);
   }
 }

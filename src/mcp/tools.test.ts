@@ -4,7 +4,7 @@
 // primitives that Vitest's Node environment does not provide directly.
 
 import type { D1Database } from '@cloudflare/workers-types';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createTaskForMcp,
   deleteTaskForMcp,
@@ -14,6 +14,7 @@ import {
   updateTaskForMcp,
 } from './tools';
 import { assertMcpScope } from './auth';
+import type { Env } from '../env';
 
 interface Row {
   id: number;
@@ -211,7 +212,7 @@ describe('MCP tool handlers', () => {
     ]) as unknown as D1Database;
 
     const summary = await getDailySummary(
-      db,
+      { DB: db } as unknown as Env,
       new Date('2026-08-03T03:00:00.000Z'),
     );
 
@@ -398,5 +399,91 @@ describe('MCP tool handlers', () => {
     expect(() => assertMcpScope(undefined, 'tasks:read')).toThrow(
       new McpToolError('この操作には tasks:read スコープが必要です'),
     );
+  });
+});
+
+describe('get_daily_summary calendar integration', () => {
+  function calendarEnv(db: D1Database): Env {
+    const store = new Map<string, string>();
+    return {
+      DB: db,
+      OAUTH_KV: {
+        get: async (key: string) => store.get(key) ?? null,
+        put: async (key: string, value: string) => void store.set(key, value),
+        delete: async (key: string) => void store.delete(key),
+      },
+      GOOGLE_CLIENT_ID: 'client-id',
+      GOOGLE_CLIENT_SECRET: 'client-secret',
+      GOOGLE_REFRESH_TOKEN: 'refresh-token',
+    } as unknown as Env;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('folds the day’s events and holidays into one call', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.startsWith('https://oauth2.googleapis.com/token'))
+          return Response.json({ access_token: 'token', expires_in: 3599 });
+        // The holiday calendar is a separate subscribed calendar, not the primary one.
+        if (url.includes('holiday'))
+          return Response.json({
+            items: [
+              {
+                id: 'holiday',
+                summary: '山の日',
+                start: { date: '2026-08-11' },
+                end: { date: '2026-08-12' },
+              },
+            ],
+          });
+        return Response.json({
+          items: [
+            {
+              id: 'event-1',
+              summary: 'ピアノ',
+              start: { dateTime: '2026-08-11T18:30:00+09:00' },
+              end: { dateTime: '2026-08-11T19:00:00+09:00' },
+            },
+          ],
+        });
+      }),
+    );
+
+    const summary = await getDailySummary(
+      calendarEnv(new FakeD1([]) as unknown as D1Database),
+      new Date('2026-08-11T03:00:00.000Z'),
+    );
+
+    expect(summary.events.map((event) => event.title)).toEqual(['ピアノ']);
+    expect(summary.holidays).toEqual(['山の日']);
+    expect(summary.calendar_unavailable).toBe(false);
+  });
+
+  it('flags an outage instead of reporting a free day', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.startsWith('https://oauth2.googleapis.com/token'))
+          return Response.json({ access_token: 'token', expires_in: 3599 });
+        return new Response('', { status: 503 });
+      }),
+    );
+
+    const summary = await getDailySummary(
+      calendarEnv(new FakeD1([]) as unknown as D1Database),
+      new Date('2026-08-11T03:00:00.000Z'),
+    );
+
+    // Empty because Google could not answer, which is not the same as "nothing on".
+    expect(summary.calendar_unavailable).toBe(true);
+    expect(summary.events).toEqual([]);
+    // The task half of the briefing still works.
+    expect(summary.date).toBe('2026-08-11');
   });
 });

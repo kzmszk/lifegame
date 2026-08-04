@@ -604,3 +604,156 @@ describe('API safety boundaries', () => {
     expect(item.headers.get('allow')).toBe('DELETE');
   });
 });
+
+describe('calendar endpoints', () => {
+  function calendarEnv(overrides: Record<string, unknown> = {}) {
+    const store = new Map<string, string>();
+    return env({
+      OAUTH_KV: {
+        get: async (key: string) => store.get(key) ?? null,
+        put: async (key: string, value: string) => void store.set(key, value),
+        delete: async (key: string) => void store.delete(key),
+      },
+      GOOGLE_CLIENT_ID: 'client-id',
+      GOOGLE_CLIENT_SECRET: 'client-secret',
+      GOOGLE_REFRESH_TOKEN: 'refresh-token',
+      ...overrides,
+    });
+  }
+
+  function stubGoogle(handler: (url: string, init?: RequestInit) => Response) {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith('https://oauth2.googleapis.com/token'))
+          return Response.json({ access_token: 'token', expires_in: 3599 });
+        calls.push({ url, init });
+        return handler(url, init);
+      }),
+    );
+    return calls;
+  }
+
+  it('rejects a malformed date before calling Google', async () => {
+    const calls = stubGoogle(() => Response.json({ items: [] }));
+    const response = await app.request(
+      '/api/calendar/events?date=2026-13-01',
+      {},
+      calendarEnv(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('returns the requested day of events', async () => {
+    stubGoogle(() =>
+      Response.json({
+        items: [
+          {
+            id: 'event-1',
+            summary: 'ランチ会',
+            start: { dateTime: '2026-08-07T12:30:00+09:00' },
+            end: { dateTime: '2026-08-07T13:00:00+09:00' },
+          },
+        ],
+      }),
+    );
+
+    const response = await app.request(
+      '/api/calendar/events?date=2026-08-07',
+      {},
+      calendarEnv(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      date: '2026-08-07',
+      events: [{ id: 'event-1', title: 'ランチ会', start_time: '12:30' }],
+    });
+  });
+
+  it('reports an upstream Google failure as 502, not as an app error', async () => {
+    stubGoogle(() => new Response('', { status: 503 }));
+    const response = await app.request(
+      '/api/calendar/events?date=2026-08-07',
+      {},
+      calendarEnv(),
+    );
+
+    expect(response.status).toBe(502);
+  });
+
+  it('reports unconfigured credentials as 500', async () => {
+    stubGoogle(() => Response.json({ items: [] }));
+    const response = await app.request(
+      '/api/calendar/events?date=2026-08-07',
+      {},
+      calendarEnv({ GOOGLE_REFRESH_TOKEN: undefined }),
+    );
+
+    expect(response.status).toBe(500);
+  });
+
+  it('rejects an end time that is not after the start', async () => {
+    const calls = stubGoogle(() => Response.json({ id: 'x' }));
+    const response = await app.request(
+      '/api/calendar/events',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: '会議',
+          date: '2026-08-05',
+          start_time: '15:00',
+          end_time: '15:00',
+        }),
+      },
+      calendarEnv(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('creates an event and returns it', async () => {
+    stubGoogle(() =>
+      Response.json({
+        id: 'created',
+        summary: '歯医者',
+        start: { dateTime: '2026-08-05T15:00:00+09:00' },
+        end: { dateTime: '2026-08-05T16:00:00+09:00' },
+      }),
+    );
+
+    const response = await app.request(
+      '/api/calendar/events',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: '歯医者',
+          date: '2026-08-05',
+          start_time: '15:00',
+        }),
+      },
+      calendarEnv(),
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      event: { id: 'created', title: '歯医者', start_time: '15:00' },
+    });
+  });
+
+  it('advertises both methods on the calendar collection', async () => {
+    const response = await app.request(
+      '/api/calendar/events',
+      { method: 'DELETE' },
+      calendarEnv(),
+    );
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get('allow')).toBe('GET, POST');
+  });
+});

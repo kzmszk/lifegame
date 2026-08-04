@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { McpAuthProps, McpScope } from './auth';
+import type { Env } from '../env';
 import { assertGrantActive, assertMcpScope, hasMcpScope } from './auth';
 import {
   createTaskForMcp,
@@ -69,9 +70,10 @@ function errorToolResult(error: unknown): {
 
 export function registerLifegameTools(
   server: McpServer,
-  db: D1Database,
+  env: Env,
   getProps: () => McpAuthProps | undefined,
 ): void {
+  const db = env.DB;
   // Every tool goes through this: the scope check answers "may this token do it",
   // the revocation check answers "is this connection still supposed to exist".
   async function authorize(
@@ -87,13 +89,13 @@ export function registerLifegameTools(
     'get_daily_summary',
     {
       description:
-        'JSTの今日について、期限が今日以前の未完了タスク、期限切れ、今日の期限、Inbox件数、今日完了したタスクを朝のブリーフィング向けにまとめて返します。',
+        'JSTの今日について、期限が今日以前の未完了タスク、期限切れ、今日の期限、Inbox件数、今日完了したタスク、Googleカレンダーの予定と祝日を朝のブリーフィング向けにまとめて返します。calendar_unavailableがtrueのときは予定を取得できなかったという意味で、予定なしとは異なります。',
       annotations: { readOnlyHint: true, destructiveHint: false },
     },
     async () => {
       try {
         await authorize('tasks:read');
-        return jsonToolResult(await getDailySummary(db));
+        return jsonToolResult(await getDailySummary(env));
       } catch (error) {
         return errorToolResult(error);
       }

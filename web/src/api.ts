@@ -1,4 +1,8 @@
 import type {
+  CalendarEvent,
+  CalendarEventCreateInput,
+  CalendarEventResponse,
+  CalendarEventsResponse,
   ConnectionsResponse,
   ErrorResponse,
   Task,
@@ -65,6 +69,26 @@ export async function updateTask(
 
 export async function removeTask(id: number): Promise<void> {
   await request<{ ok: true }>(`/api/tasks/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchCalendarEvents(
+  date?: string,
+): Promise<CalendarEvent[]> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : '';
+  const response = await request<CalendarEventsResponse>(
+    `/api/calendar/events${query}`,
+  );
+  return response.events;
+}
+
+export async function createCalendarEvent(
+  input: CalendarEventCreateInput,
+): Promise<CalendarEvent> {
+  const response = await request<CalendarEventResponse>(
+    '/api/calendar/events',
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return response.event;
 }
 
 export async function fetchConnections(): Promise<ConnectionsResponse> {

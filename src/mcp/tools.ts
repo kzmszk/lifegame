@@ -8,7 +8,9 @@ import {
 } from '../db/tasks';
 import { tokyoDayBounds } from '../lib/time';
 import { fieldsFromBody, validateFields } from '../lib/task-validation';
-import type { Task, TaskCreateInput } from '../shared/types';
+import { listCalendarEvents, listHolidays } from '../lib/google-calendar';
+import type { CalendarEvent, Task, TaskCreateInput } from '../shared/types';
+import type { Env } from '../env';
 
 export interface DailySummary {
   date: string;
@@ -17,6 +19,14 @@ export interface DailySummary {
   due_today_tasks: Task[];
   inbox_count: number;
   completed_today_tasks: Task[];
+  events: CalendarEvent[];
+  holidays: string[];
+  /**
+   * True when Google Calendar could not be reached, so `events` and `holidays`
+   * are empty for lack of an answer rather than for lack of entries. Without
+   * this the briefing would cheerfully report a free day during an outage.
+   */
+  calendar_unavailable: boolean;
 }
 
 export class McpToolError extends Error {
@@ -52,13 +62,26 @@ function assertValidId(id: number): void {
 }
 
 export async function getDailySummary(
-  db: D1Database,
+  env: Env,
   now: Date = new Date(),
 ): Promise<DailySummary> {
+  const db = env.DB;
   const bounds = tokyoDayBounds(now);
-  const [todayTasks, inboxTasks] = await Promise.all([
+  // The calendar is folded in here so a briefing is one tool call, per DESIGN.md
+  // section 12. A Google outage must not take the task half of the summary down
+  // with it, so the calendar half degrades to empty and says so.
+  const calendar = Promise.all([
+    listCalendarEvents(env, bounds.today),
+    listHolidays(env, bounds.today),
+  ]).catch((error: unknown) => {
+    console.warn(`ブリーフィングの予定取得に失敗: ${String(error)}`);
+    return null;
+  });
+
+  const [todayTasks, inboxTasks, calendarResult] = await Promise.all([
     listTasks(db, 'today', bounds.today, bounds.startUtc, bounds.nextStartUtc),
     listTasks(db, 'inbox', bounds.today, bounds.startUtc, bounds.nextStartUtc),
+    calendar,
   ]);
   const openTasks = todayTasks.filter((task) => task.status === 'open');
   const completedTodayTasks = todayTasks.filter(
@@ -74,6 +97,9 @@ export async function getDailySummary(
     due_today_tasks: openTasks.filter((task) => task.due_date === bounds.today),
     inbox_count: inboxTasks.length,
     completed_today_tasks: completedTodayTasks,
+    events: calendarResult?.[0] ?? [],
+    holidays: calendarResult?.[1] ?? [],
+    calendar_unavailable: calendarResult === null,
   };
 }
 

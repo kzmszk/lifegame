@@ -10,4 +10,8 @@ export interface Env {
   ALLOWED_EMAIL?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  // Google Calendar. Set with `wrangler secret put`; see docs/GCAL_SETUP.md.
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_REFRESH_TOKEN?: string;
 }

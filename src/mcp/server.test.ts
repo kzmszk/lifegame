@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { registerLifegameTools } from './registration';
+import type { Env } from '../env';
+
+// The MCP tools only reach for DB here; the calendar half of get_daily_summary
+// has no credentials in these fakes and degrades on its own.
+function envFor(db: D1Database): Env {
+  return { DB: db } as unknown as Env;
+}
 
 // Revocation is looked up in D1 alongside the task queries, so the fakes below
 // answer both. `first()` returning null is what "this grant is still live" looks like.
@@ -22,7 +29,7 @@ describe('MCP tool registration', () => {
   it('publishes read/write/destructive annotations and returns tool errors for missing scopes', async () => {
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     const props = { email: 'owner@example.com', scopes: ['tasks:read'] };
-    registerLifegameTools(server, liveDb(), () => props);
+    registerLifegameTools(server, envFor(liveDb()), () => props);
 
     const registeredTools = (
       server as unknown as {
@@ -96,7 +103,7 @@ describe('MCP tool registration', () => {
     } as unknown as D1Database;
     let props = { email: 'owner@example.com', scopes: ['tasks:write'] };
     const server = new McpServer({ name: 'test', version: '1.0.0' });
-    registerLifegameTools(server, db, () => props);
+    registerLifegameTools(server, envFor(db), () => props);
     const registeredTools = (
       server as unknown as {
         _registeredTools: Record<
@@ -160,7 +167,7 @@ describe('MCP tool registration', () => {
       scopes: ['tasks:read', 'tasks:write'],
       grantId: 'grant-1',
     };
-    registerLifegameTools(server, revokedDb, () => props);
+    registerLifegameTools(server, envFor(revokedDb), () => props);
     const registeredTools = (
       server as unknown as {
         _registeredTools: Record<
