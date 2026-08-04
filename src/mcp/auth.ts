@@ -2,7 +2,7 @@ import { McpToolError } from './tools';
 import type { Env } from '../env';
 import { isGrantRevoked } from '../lib/revocation';
 
-export type McpScope = 'tasks:read' | 'tasks:write';
+export type McpScope = 'tasks:read' | 'tasks:write' | 'calendar:read';
 export type McpAuthProps = { email: string; scopes: string[] } & Record<
   string,
   unknown

@@ -6,7 +6,14 @@ import type { Env } from './env';
 import { getAccessUser, isAccessAuthError } from './lib/access';
 import { app } from './app';
 
-export const SUPPORTED_SCOPES = ['tasks:read', 'tasks:write'] as const;
+// calendar:read is separate from tasks:read because Google Calendar is a
+// different data source with a different owner. Grants issued before it existed
+// carry only the task scopes, so they keep seeing tasks only until reconnected.
+export const SUPPORTED_SCOPES = [
+  'tasks:read',
+  'tasks:write',
+  'calendar:read',
+] as const;
 type SupportedScope = (typeof SUPPORTED_SCOPES)[number];
 
 const CONSENT_CSRF_COOKIE_PREFIX = '__Host-lifegame-consent-';
@@ -350,7 +357,7 @@ function consentPage(
   const requestedScopes =
     oauthRequest.scope.length > 0
       ? oauthRequest.scope.join(', ')
-      : '省略（tasks:read と tasks:write の両方）';
+      : `省略（${SUPPORTED_SCOPES.join(' と ')} のすべて）`;
   const clientName = client.clientName || oauthRequest.clientId;
   const redirectUris = client.redirectUris
     .map((uri) => `<li>${escapeHtml(uri)}</li>`)
@@ -363,8 +370,13 @@ function consentPage(
   </head>
   <body><main>
     <h1>lifegameへの接続</h1>
-    <p><strong>${escapeHtml(clientName)}</strong>（client_id: <code>${escapeHtml(client.clientId)}</code>）が、あなたのlifegameタスクにアクセスしようとしています。</p>
+    <p><strong>${escapeHtml(clientName)}</strong>（client_id: <code>${escapeHtml(client.clientId)}</code>）が、あなたのlifegameのデータにアクセスしようとしています。</p>
     <p>要求された権限: ${escapeHtml(requestedScopes)}</p>
+    <ul>
+      <li><code>tasks:read</code> — lifegameのタスクを読む</li>
+      <li><code>tasks:write</code> — lifegameのタスクを追加・変更・削除する</li>
+      <li><code>calendar:read</code> — Googleカレンダー（private）の予定と祝日を読む</li>
+    </ul>
     <p>登録済みのリダイレクトURI:</p><ul>${redirectUris}</ul>
     <form method="post" action="${escapeHtml(action.toString())}">
       <input type="hidden" name="flow_id" value="${escapeHtml(flowId)}">

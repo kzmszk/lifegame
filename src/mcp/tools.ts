@@ -19,15 +19,20 @@ export interface DailySummary {
   due_today_tasks: Task[];
   inbox_count: number;
   completed_today_tasks: Task[];
-  events: CalendarEvent[];
-  holidays: string[];
+  /**
+   * Calendar fields are absent entirely, rather than empty, when the caller has
+   * no `calendar:read` grant. An empty array would read as "nothing scheduled",
+   * which is the same lie as reporting a free day during an outage.
+   */
+  events?: CalendarEvent[];
+  holidays?: string[];
   /**
    * True when the appointments could not be fetched, so `events` is empty for
    * lack of an answer rather than for lack of entries. Without this the briefing
    * would cheerfully report a free day during an outage. Holidays are fetched
    * separately and are not covered by this flag.
    */
-  calendar_unavailable: boolean;
+  calendar_unavailable?: boolean;
 }
 
 export class McpToolError extends Error {
@@ -65,6 +70,9 @@ function assertValidId(id: number): void {
 export async function getDailySummary(
   env: Env,
   now: Date = new Date(),
+  // Defaults closed: a caller that has not established a calendar grant gets
+  // tasks only, rather than calendar data by omission.
+  includeCalendar = false,
 ): Promise<DailySummary> {
   const db = env.DB;
   const bounds = tokyoDayBounds(now);
@@ -75,16 +83,18 @@ export async function getDailySummary(
   // The two calendar reads fail independently: holidays are a nicety on a
   // separate subscribed calendar, and losing them must not discard appointments
   // that were fetched successfully.
-  const events = listCalendarEvents(env, bounds.today).catch(
-    (error: unknown) => {
-      console.warn(`ブリーフィングの予定取得に失敗: ${String(error)}`);
-      return null;
-    },
-  );
-  const holidays = listHolidays(env, bounds.today).catch((error: unknown) => {
-    console.warn(`ブリーフィングの祝日取得に失敗: ${String(error)}`);
-    return [];
-  });
+  const events = !includeCalendar
+    ? Promise.resolve(null)
+    : listCalendarEvents(env, bounds.today).catch((error: unknown) => {
+        console.warn(`ブリーフィングの予定取得に失敗: ${String(error)}`);
+        return null;
+      });
+  const holidays = !includeCalendar
+    ? Promise.resolve([])
+    : listHolidays(env, bounds.today).catch((error: unknown) => {
+        console.warn(`ブリーフィングの祝日取得に失敗: ${String(error)}`);
+        return [];
+      });
 
   const [todayTasks, inboxTasks, calendarEvents, holidayNames] =
     await Promise.all([
@@ -119,9 +129,13 @@ export async function getDailySummary(
     due_today_tasks: openTasks.filter((task) => task.due_date === bounds.today),
     inbox_count: inboxTasks.length,
     completed_today_tasks: completedTodayTasks,
-    events: calendarEvents ?? [],
-    holidays: holidayNames,
-    calendar_unavailable: calendarEvents === null,
+    ...(includeCalendar
+      ? {
+          events: calendarEvents ?? [],
+          holidays: holidayNames,
+          calendar_unavailable: calendarEvents === null,
+        }
+      : {}),
   };
 }
 

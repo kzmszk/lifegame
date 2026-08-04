@@ -67,15 +67,27 @@ describe('OAuth authorization policy', () => {
     ).toBe('unauthorized_client');
   });
 
-  it('rejects unknown scopes and defaults omitted scope to both task scopes', () => {
+  it('rejects unknown scopes and defaults omitted scope to every supported scope', () => {
     expect(
       validateAuthorizationRequest(
         authorizationRequest({ scope: ['tasks:admin'] }),
         client(),
       )?.error,
     ).toBe('invalid_scope');
-    expect(grantedScopesForRequest([])).toEqual(['tasks:read', 'tasks:write']);
+    // Omitting scope stays "everything supported", and the consent page
+    // enumerates what that covers, so calendar access is still shown before
+    // approval rather than folded in silently.
+    expect(grantedScopesForRequest([])).toEqual([
+      'tasks:read',
+      'tasks:write',
+      'calendar:read',
+    ]);
     expect(grantedScopesForRequest(['tasks:read'])).toEqual(['tasks:read']);
+    // A grant issued before calendar:read existed carries only what it was given.
+    expect(grantedScopesForRequest(['tasks:read', 'tasks:write'])).toEqual([
+      'tasks:read',
+      'tasks:write',
+    ]);
   });
 });
 

@@ -457,11 +457,30 @@ describe('get_daily_summary calendar integration', () => {
     const summary = await getDailySummary(
       calendarEnv(new FakeD1([]) as unknown as D1Database),
       new Date('2026-08-11T03:00:00.000Z'),
+      true,
     );
 
-    expect(summary.events.map((event) => event.title)).toEqual(['ピアノ']);
+    expect(summary.events?.map((event) => event.title)).toEqual(['ピアノ']);
     expect(summary.holidays).toEqual(['山の日']);
     expect(summary.calendar_unavailable).toBe(false);
+  });
+
+  it('omits the calendar fields entirely without a calendar grant', async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({ access_token: 'token', expires_in: 3599 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const summary = await getDailySummary(
+      calendarEnv(new FakeD1([]) as unknown as D1Database),
+      new Date('2026-08-11T03:00:00.000Z'),
+    );
+
+    // Absent, not empty: an empty array would read as "nothing scheduled".
+    expect('events' in summary).toBe(false);
+    expect('calendar_unavailable' in summary).toBe(false);
+    // Google is never contacted at all, so credentials cannot leak a lookup.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('keeps the appointments when only the holiday calendar fails', async () => {
@@ -489,10 +508,11 @@ describe('get_daily_summary calendar integration', () => {
     const summary = await getDailySummary(
       calendarEnv(new FakeD1([]) as unknown as D1Database),
       new Date('2026-08-11T03:00:00.000Z'),
+      true,
     );
 
     // Losing an optional extra must not discard what was actually fetched.
-    expect(summary.events.map((event) => event.title)).toEqual(['ピアノ']);
+    expect(summary.events?.map((event) => event.title)).toEqual(['ピアノ']);
     expect(summary.holidays).toEqual([]);
     expect(summary.calendar_unavailable).toBe(false);
   });
@@ -511,6 +531,7 @@ describe('get_daily_summary calendar integration', () => {
     const summary = await getDailySummary(
       calendarEnv(new FakeD1([]) as unknown as D1Database),
       new Date('2026-08-11T03:00:00.000Z'),
+      true,
     );
 
     // Empty because Google could not answer, which is not the same as "nothing on".
