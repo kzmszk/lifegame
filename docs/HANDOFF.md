@@ -17,15 +17,15 @@ Phase 4 のタスク分解のうち **1(MCPサーバー + OAuth)、2(ツール�
 | Cloudflare Access      | 設定済み。`/authorize` は保護、OAuthプロトコル用パスはBypass。JWTをWorker内で検証  |
 | 接続の一覧と切断       | 稼働中。設定画面(ヘッダー右上の `●`)から `/api/connections`                        |
 | ブリーフィングスキル   | claude.ai に登録済み。アプリのチャットで起動を確認した                             |
-| ブラウザE2E            | Playwright 2本。ローカルの `wrangler dev` に対して実行(3.1 に範囲と穴)             |
+| ブラウザE2E            | Playwright 6本。ローカルの `wrangler dev` に対して実行(3.1 に範囲と穴)             |
 
-ユニットテストは 76 件、E2E は 2 件。デプロイ前は `npm run check`(format / lint / typecheck /
+ユニットテストは 76 件、E2E は 6 件。デプロイ前は `npm run check`(format / lint / typecheck /
 test / build)を通す。E2E は `npm run e2e` で別立て(サーバーは設定が自動起動する)。
 CI は PR と main への push で `check` と `e2e` を並走させる。
 
 **本番は PR #14 マージ後をデプロイした状態のまま**(migration 0002 適用済み)。main はその後
-PR #15 とフック修正で先行しているが、**変更はテストとツールだけで `src/` `web/` に触れていない**
-ため、本番との差は無い。次に実装が入るまでデプロイは不要。
+PR #15 #16 とフック修正で先行しているが、**変更はテストとツールだけで `src/` `web/` に触れて
+いない**ため、本番との差は無い。次に実装が入るまでデプロイは不要。
 未認証では `/` と `/api/*` が 302、`/mcp` が 401、`/.well-known/*` が 200、`/csp-report` は
 POST が 204 で GET は 405。
 
@@ -53,10 +53,13 @@ Access を通った自分だけ」という設計の要になっている。
 
 ## 3. 次にやること
 
-### 3.1 ブラウザE2E: 土台はできた。承認フローとCSPはまだ
+### 3.1 ブラウザE2E: 承認フローとCSPまで到達した。残るのは Access 層
 
-PR #15 で Playwright を入れた(`e2e/`、`playwright.config.ts`)。`npm run e2e` で
-`wrangler dev` が自動起動し、ローカル D1 に対して2本走る。
+PR #15 で Playwright を入れ(`e2e/`、`playwright.config.ts`)、PR #16 で当初の目的だった
+承認フローと CSP まで届いた。`npm run e2e` で `wrangler dev` が自動起動し、ローカルの
+D1 と KV に対して6本走る。
+
+`e2e/tasks.spec.ts`(2本):
 
 1. Inbox でタスクを追加 → **リロード** → 詳細 → 削除。リロードを挟むので、React の state ではなく
    D1 に届いたことを見ている
@@ -65,25 +68,35 @@ PR #15 で Playwright を入れた(`e2e/`、`playwright.config.ts`)。`npm run e
 これで **PR #7 型の不具合(UIの操作可能性)は拾える**。当時の `＋` が `<span>` でフォームに submit が
 無かった件は、いま同じことをすればテスト1が落ちる。
 
-**ただし当初の目的だったCSPと承認フローは、まだ手つかず**。`SameSite=Lax` と
-`frame-ancestors 'none'` は依然として文字列としてしか検証されていないし、`form-action` の
-リダイレクト遮断(5章)を再現する経路も無い。承認フローは `/authorize` を通る必要があり、
-そこは Access の内側なので、いまの「Access をバイパスする」構成のままでは届かない。次にやるなら:
+`e2e/consent.spec.ts`(4本)。DCR でクライアントを登録し、動的ポートに**実物の**コールバック
+サーバーを立てて回す:
 
-- `AUTH_REQUIRED=false` のまま `/authorize` まで通せるか(ローカルでは Access 自体が居ないので、
-  OAuth プロバイダ側の承認画面には到達できるはず)を確かめる
-- 承認 → リダイレクトの1本を通し、CSP がそのリダイレクトを止めないことを**ブラウザで**検証する
-- cookie 属性は `context.cookies()` で実物を読む
+3. 承認 → コールバック到達 → `/token` でコード交換
+4. 拒否 → `error=access_denied` と state の保存
+5. 承認CSRF cookie の属性を `context.cookies()` で実測(`Secure` / `HttpOnly` / `SameSite=Lax` / `Path=/`)
+6. 承認画面の CSP ヘッダー(`form-action` の callback オリジン、`frame-ancestors 'none'`)
+
+**`consentCsp` から callback オリジンを外すと4本中3本が落ちる**。うち拒否テストは
+`net::ERR_ABORTED` — ブラウザが実際にリダイレクトを拒否した、5章の「承認画面が無反応」と同じ症状。
+テストが目的のバグを本当に捕まえることは、そうやって確認してある。
 
 E2Eの前提と穴:
 
 - **Access 層は対象外**。`e2e:server` が `AUTH_REQUIRED=false` を渡してバイパスしている
-  (`src/lib/access.ts` の分岐。`.dev.vars` と同じ経路)。本番ホストに向けるには service token が要る
-- ローカル D1 は実行をまたいで残るため、タスク名にプロセスごとの ID を混ぜ、`afterEach` がその ID で
-  掃引する。**`testId` はリトライ間でも実行間でも同じ値なので、それだけでは一意にならない**
-  (Codex ボットの指摘。同名タスクが2件になると strict mode で locator が壊れる)
+  (`src/lib/access.ts` の分岐。`.dev.vars` と同じ経路)。`handleAuthorize` は先頭で
+  `getAccessUser` を呼ぶだけなので、これだけで `/authorize` に届く。本番ホストに向けるには
+  service token が要る。**いま残っている穴はここだけ**
+- `frame-ancestors` の iframe テストは**意図的に入れていない**。承認画面は同じポリシーを `<meta>`
+  でも出しているが、Chrome は `frame-ancestors` と `report-uri` を meta 経由では無視する
+  (コンソールに警告が出る)。効いているのはヘッダーだけなので、ヘッダーを直接見ている。
+  加えて `X-Frame-Options: DENY` もあるため、iframe が塞がれてもどちらが効いたのか判別できない
+- ローカル D1 と KV は実行をまたいで残るため、タスク名とクライアント名にプロセスごとの ID を混ぜ、
+  `afterEach` がその ID で掃引する。**`testId` はリトライ間でも実行間でも同じ値なので、それだけでは
+  一意にならない**(Codex ボットの指摘。同名タスクが2件になると strict mode で locator が壊れる)
+- 掃引の失敗は**握り潰さず assert する**。次の実行は新しい RUN_ID を持つので、取りこぼした grant を
+  誰も回収しに来ない。DCR クライアントは KV に7日 TTL で残るが、これは溜まるだけで後続を汚さない
 - 期限なしのタスクは「今日」ではなく Inbox に入る(`src/db/tasks.ts` の `listTasks`)。
-  だから2本とも Inbox 起点になっている
+  だから最初の2本とも Inbox 起点になっている
 
 ### 3.2 Phase 4 タスク4: 自動ブリーフィング
 
@@ -147,10 +160,26 @@ npx wrangler d1 execute lifegame --remote --command "SELECT * FROM revoked_grant
 **CSRFが原因に見えるが実際は違う**。承認画面のCSPを触るときは
 `consent CSP permits the redirect it will issue` のテストを消さないこと。
 
+**`wrangler dev` はリクエストの Host を本番ドメインに書き換える**
+`routes` に `custom_domain` があると、worker から見える `request.url` のホストが
+`lifegame.tachicoma.com` になる。承認画面はそこからフォームの action を組むので、ローカルで
+開いているのに action が本番を指し、`form-action 'self'`(= `127.0.0.1:8787`)と食い違って
+**ブラウザから承認できなくなる**。`e2e:server` の `--host 127.0.0.1:8787` がそれを止めている。
+**ポートまで含める必要がある** — `--host 127.0.0.1` だけだと :80 になり、やはり一致しない。
+`playwright.config.ts` の `baseURL` と手で揃える形なので、ズレたら `openConsent` の
+オリジン比較が原因を名指しして落ちる(黙って waitForURL のタイムアウトになるのを避けるため)。
+
 **`wrangler dev` 起動中にフロントを再ビルドすると画面が真っ白になる**
 アセットのマニフェストが起動時のまま古いので、新しいハッシュ付きJSへのリクエストが
 SPAフォールバックで index.html を返し、`Content-Type: text/html` のためモジュールが実行されない。
 コンソールにエラーも出ないので原因が見えにくい。**再ビルドしたら dev サーバーを再起動する**。
+
+**Playwright のフィクスチャ第1引数は空でも分割代入でなければならない**
+Playwright は引数のソーステキストを検査し、`async (fixtures, use)` と書くとファイルごと拒否して
+**テストが1本も起動しない**。`async ({}, use)` にする必要があるが、今度は oxlint の
+`no-empty-pattern` に当たる。`e2e/consent.spec.ts` では理由付きの
+`oxlint-disable-next-line` で通している。実行しないと出ないエラーなので、Codex に書かせた
+テストは必ず Claude が一度回すこと。
 
 **vitest が Playwright のテストを拾う**
 `vitest run` の既定 include は `**/*.spec.ts` にも当たるので、`e2e/` を置くと `npm test` が
@@ -181,8 +210,9 @@ DCR により Claude 側が自動で登録する。設定に必要なのはURL�
 このリポジトリで確立している進め方。
 
 1. 実装は Codex に委譲(`--model gpt-5.6-luna --effort xhigh`)
-2. レビューも Codex(`--model gpt-5.6-sol --effort xhigh`)、指摘は Critical/Major/Minor すべて対応
+2. レビューも Codex(`--model gpt-5.6-sol --effort high`)、指摘は Critical/Major/Minor すべて対応
 3. 数行で済む小さな修正は Claude が直接行う
+   (**Playwright の検証は Claude が回す**。理由は下の補足)
 4. 変更は必ず PR にする。GitHub の Codex ボットが自動レビューするので、その指摘にも対応してからマージ。
    ただし**このファイルの更新は PR にせず main へ直接 push する**(レビューする相手がいないため)
 5. コミット前に `npm run check`(format / lint / typecheck / test / build)。husky が staged 分を見る。
@@ -192,6 +222,13 @@ DCR により Claude 側が自動で登録する。設定に必要なのはURL�
 
 - Codex のサンドボックスは `npm install` と `git commit` ができない。依存追加・検証・コミットは
   Claude 側で行う
+- **Codex のサンドボックスは `127.0.0.1` への bind も禁止されている**(`EPERM`)。`wrangler dev` も
+  テスト内のコールバックサーバーも立てられないので、`npm run e2e` は構造的に走らない。
+  Codex には `npm run check` までを頼み、**E2E は Claude が回す**。指示に `npm run e2e` を
+  含めても時間を溶かすだけになる
+- Codex に渡す差分が小さいときは、**`node_modules` を掘るなと明示する**。PR #16 のレビューでは
+  それが無いために `oauth-provider.js` を延々読み返すループに入り、37分走って何も出さずに死んだ。
+  禁止して投げ直したら同じ差分を3分で返した
 - **Claude Code から委譲するときは codex plugin のサブエージェント(`codex:codex-rescue`)を使う**。
   `codex exec` を Bash から直接叩くとパーミッションのクラシファイアに弾かれる
 - サブエージェントは**ジョブを起動して即座に返るだけ**で、完了を待たない。返ってきた task ID を
@@ -208,7 +245,7 @@ DCR により Claude 側が自動で登録する。設定に必要なのはURL�
   レビューもコメントも残さない。`gh pr view` の reviews/comments は空のままなので、
   `gh api repos/<owner>/<repo>/issues/<n>/reactions` を見ないとレビュー済みだと分からない。
   指摘があるときは逆に、review 本体は定型文だけで**中身はインラインコメント側にある**。
-  `gh api repos/<owner>/<repo>/pulls/<n>/comments` を見ること。PR #15 では P2 が1件付いた。
+  `gh api repos/<owner>/<repo>/pulls/<n>/comments` を見ること。PR #15 と #16 で P2 が1件ずつ付いた。
   レビューは PR 作成から数分遅れて来るので、作成直後に空でも「無し」と判断しない
 - **フォーマッタの ignore 対象だけを触るコミットは pre-commit で落ちる**(だった)。oxfmt は
   渡されたパスが全部 `ignorePatterns` に当たると exit 2 を返し、lint-staged がそれを
