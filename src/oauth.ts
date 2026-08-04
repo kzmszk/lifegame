@@ -362,14 +362,19 @@ function consentPage(
   const csp = consentCsp(oauthRequest.redirectUri);
   const flowId = crypto.randomUUID();
   const csrfToken = crypto.randomUUID();
+  // Describe what approving actually grants, not the whole catalogue. A client
+  // asking for tasks:read only must not be presented as asking for the calendar.
+  const grantedScopes = grantedScopesForRequest(oauthRequest.scope);
   const requestedScopes =
     oauthRequest.scope.length > 0
       ? oauthRequest.scope.join(', ')
-      : `省略（${SUPPORTED_SCOPES.join(' と ')} のすべて）`;
-  const scopeDescriptions = SUPPORTED_SCOPES.map(
-    (scope) =>
-      `<li><code>${escapeHtml(scope)}</code> — ${escapeHtml(SCOPE_DESCRIPTIONS[scope])}</li>`,
-  ).join('');
+      : `省略（${grantedScopes.join(' と ')} のすべて）`;
+  const scopeDescriptions = grantedScopes
+    .map(
+      (scope) =>
+        `<li><code>${escapeHtml(scope)}</code> — ${escapeHtml(SCOPE_DESCRIPTIONS[scope])}</li>`,
+    )
+    .join('');
   const clientName = client.clientName || oauthRequest.clientId;
   const redirectUris = client.redirectUris
     .map((uri) => `<li>${escapeHtml(uri)}</li>`)

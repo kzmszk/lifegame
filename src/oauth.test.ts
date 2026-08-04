@@ -211,18 +211,39 @@ describe('OAuth consent CSRF protection', () => {
     );
   });
 
-  it('explains every supported scope on the consent page', async () => {
+  const consentHtmlForScope = async (scope: string[]): Promise<string> => {
+    const env = makeEnv({ count: 0 });
+    (
+      env as unknown as {
+        OAUTH_PROVIDER: { parseAuthRequest: () => Promise<AuthRequest> };
+      }
+    ).OAUTH_PROVIDER.parseAuthRequest = async () =>
+      authorizationRequest({ scope });
     const page = await fetchAuthorize(
       new Request('https://lifegame.example/authorize'),
-      makeEnv({ count: 0 }),
+      env,
     );
-    const html = await page.text();
+    return page.text();
+  };
 
-    // Approving a permission that the page never named is the failure this guards.
+  it('explains every scope it is about to grant', async () => {
+    // Omitted scope grants the full set, so the full set must be explained.
+    const html = await consentHtmlForScope([]);
+
     for (const scope of ['tasks:read', 'tasks:write', 'calendar:read']) {
       expect(html).toContain(`<code>${scope}</code>`);
     }
     expect(html).toContain('Googleカレンダー');
+  });
+
+  it('describes only the requested scopes, not the whole catalogue', async () => {
+    const html = await consentHtmlForScope(['tasks:read']);
+
+    expect(html).toContain('<code>tasks:read</code>');
+    // Listing these would overstate what the client actually asked for.
+    expect(html).not.toContain('<code>tasks:write</code>');
+    expect(html).not.toContain('<code>calendar:read</code>');
+    expect(html).not.toContain('Googleカレンダー');
   });
 
   it('allows a custom-scheme callback by scheme in form-action', async () => {
