@@ -1,12 +1,13 @@
-# 引き継ぎメモ (最終更新: 2026-08-03)
+# 引き継ぎメモ (最終更新: 2026-08-04)
 
 Phase 4 (MCP連携) を実装し、本番稼働させた時点の状態と、次に着手すべきことをまとめる。
 設計の背景は [DESIGN.md](DESIGN.md)、セットアップ手順は [../README.md](../README.md) を参照。
 
 ## 1. 現在地
 
-Phase 4 のタスク分解のうち **1(MCPサーバー + OAuth)と 2(ツール一式)が完了し、本番で動作中**。
-Claude アプリから `lifegame.tachicoma.com/mcp` に接続してタスクの読み書きができる。
+Phase 4 のタスク分解のうち **1(MCPサーバー + OAuth)、2(ツール一式)、3(朝のブリーフィング)が完了し、
+本番で動作中**。Claude アプリから `lifegame.tachicoma.com/mcp` に接続してタスクの読み書きができる。
+残るはタスク4(自動ブリーフィング)のみ。
 
 | 項目                   | 状態                                                                               |
 | ---------------------- | ---------------------------------------------------------------------------------- |
@@ -15,7 +16,7 @@ Claude アプリから `lifegame.tachicoma.com/mcp` に接続してタスクの�
 | ツール5種              | `get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task` |
 | Cloudflare Access      | 設定済み。`/authorize` は保護、OAuthプロトコル用パスはBypass                       |
 | 接続の一覧と切断       | 稼働中。設定画面(ヘッダー右上の `●`)から `/api/connections`                        |
-| ブリーフィングスキル   | ファイルは `skills/morning-briefing/` にあるが **claude.ai に未登録**              |
+| ブリーフィングスキル   | claude.ai に登録済み。アプリのチャットで起動を確認した                             |
 
 テストは 65 件。デプロイ前は `npm run check`(format / lint / typecheck / test / build)を通す。
 CI も PR と main への push で同じものを回す。
@@ -38,19 +39,14 @@ Access を通った自分だけ」という設計の要になっている。
 
 ## 3. 次にやること(未反映の作業は無い)
 
-### 3.1 すぐできる: 朝のブリーフィング(Phase 4 タスク3)
-
-`skills/morning-briefing/` を ZIP 化して claude.ai にスキルとして登録する。
-登録後、朝に「今日のブリーフィングをして」と話しかけて実運用テストする。
-
-### 3.2 保険: Access JWT 検証
+### 3.1 保険: Access JWT 検証
 
 Worker は `Cf-Access-Authenticated-User-Email` ヘッダーを署名検証せずに信頼している。
 現構成では Access の外に出る入口が無いので実害は無いが、**将来ルートを足したり
 `workers.dev` を戻したときに、この前提が静かに崩れる**。`Cf-Access-Jwt-Assertion` の
 署名・issuer・audience を検証すれば、構成ミスに依存しなくなる。Cloudflare も検証を推奨している。
 
-### 3.3 テストの盲点: ブラウザE2E
+### 3.2 テストの盲点: ブラウザE2E
 
 CSPやcookie属性は「ブラウザへの指示」なので、サーバー側のテストでは効果を検証できない。
 `form-action` の不具合(後述)はこれで見逃した。現在 `SameSite=Lax` と `frame-ancestors 'none'` は
@@ -61,7 +57,7 @@ CSPやcookie属性は「ブラウザへの指示」なので、サーバー側�
 submit ボタンが1つも無かった)は、API が正常なのでサーバー側テストは全部通っていた。
 **UIの操作可能性はサーバーテストでは検出できない**。E2Eを入れるときはCSPと一緒に拾いたい。
 
-### 3.4 Phase 4 タスク4: 自動ブリーフィング
+### 3.3 Phase 4 タスク4: 自動ブリーフィング
 
 claude.ai のスケジュールタスクによる自動化。実運用の手応えを見てからで十分。
 
