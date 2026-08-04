@@ -1,11 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import type { APIRequestContext } from '@playwright/test';
 import type { Task } from '../src/shared/types';
 
-// The local D1 file persists between runs, so every task carries a unique
-// marker and each test removes what it created.
+// The local D1 file outlives a run, so titles carry a marker that is unique per
+// process. testId alone is stable across runs and retries: a run that died
+// before its cleanup would hand the next attempt a second task with the same
+// title, and the strict-mode locators below would then match both.
+const RUN_ID = randomUUID().slice(0, 8);
+
 function uniqueTitle(label: string): string {
-  return `e2e ${label} ${test.info().testId}`;
+  return `e2e ${label} ${RUN_ID}.${test.info().retry}`;
 }
 
 async function createTask(
@@ -18,12 +23,18 @@ async function createTask(
   return body.task;
 }
 
-async function deleteTask(
-  request: APIRequestContext,
-  id: number,
-): Promise<void> {
-  await request.delete(`/api/tasks/${id}`);
-}
+// Runs whatever the test did or failed to do, including for tasks this file
+// created through the UI and never learned the id of.
+test.afterEach(async ({ request }) => {
+  const response = await request.get('/api/tasks?view=all');
+  if (!response.ok()) return;
+  const { tasks } = (await response.json()) as { tasks: Task[] };
+  for (const task of tasks) {
+    if (task.title.includes(RUN_ID)) {
+      await request.delete(`/api/tasks/${task.id}`);
+    }
+  }
+});
 
 test('a task added from Inbox survives a reload and can be deleted', async ({
   page,
@@ -58,19 +69,15 @@ test('completing a task takes it out of Inbox', async ({ page, request }) => {
   const title = uniqueTitle('complete');
   const task = await createTask(request, title);
 
-  try {
-    await page.goto('/inbox');
-    const card = page.locator('.task-card', { hasText: title });
-    await expect(card).toBeVisible();
+  await page.goto('/inbox');
+  const card = page.locator('.task-card', { hasText: title });
+  await expect(card).toBeVisible();
 
-    await card.getByRole('button', { name: '完了にする' }).click();
+  await card.getByRole('button', { name: '完了にする' }).click();
 
-    // Inbox is open tasks with no due date, so a completed one drops out of it.
-    await expect(page.locator('.task-card', { hasText: title })).toHaveCount(0);
+  // Inbox is open tasks with no due date, so a completed one drops out of it.
+  await expect(page.locator('.task-card', { hasText: title })).toHaveCount(0);
 
-    const reread = await request.get(`/api/tasks/${task.id}`);
-    expect(((await reread.json()) as { task: Task }).task.status).toBe('done');
-  } finally {
-    await deleteTask(request, task.id);
-  }
+  const reread = await request.get(`/api/tasks/${task.id}`);
+  expect(((await reread.json()) as { task: Task }).task.status).toBe('done');
 });
