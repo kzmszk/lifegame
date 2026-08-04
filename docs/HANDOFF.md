@@ -17,11 +17,15 @@ Phase 4 のタスク分解のうち **1(MCPサーバー + OAuth)、2(ツール�
 | Cloudflare Access      | 設定済み。`/authorize` は保護、OAuthプロトコル用パスはBypass。JWTをWorker内で検証  |
 | 接続の一覧と切断       | 稼働中。設定画面(ヘッダー右上の `●`)から `/api/connections`                        |
 | ブリーフィングスキル   | claude.ai に登録済み。アプリのチャットで起動を確認した                             |
+| ブラウザE2E            | Playwright 2本。ローカルの `wrangler dev` に対して実行(3.1 に範囲と穴)             |
 
-テストは 76 件。デプロイ前は `npm run check`(format / lint / typecheck / test / build)を通す。
-CI も PR と main への push で同じものを回す。
+ユニットテストは 76 件、E2E は 2 件。デプロイ前は `npm run check`(format / lint / typecheck /
+test / build)を通す。E2E は `npm run e2e` で別立て(サーバーは設定が自動起動する)。
+CI は PR と main への push で `check` と `e2e` を並走させる。
 
-**リポジトリと本番は一致している**(main = PR #14 マージ後をデプロイ済み、migration 0002 適用済み)。
+**本番は PR #14 マージ後をデプロイした状態のまま**(migration 0002 適用済み)。main はその後
+PR #15 とフック修正で先行しているが、**変更はテストとツールだけで `src/` `web/` に触れていない**
+ため、本番との差は無い。次に実装が入るまでデプロイは不要。
 未認証では `/` と `/api/*` が 302、`/mcp` が 401、`/.well-known/*` が 200、`/csp-report` は
 POST が 204 で GET は 405。
 
@@ -49,16 +53,37 @@ Access を通った自分だけ」という設計の要になっている。
 
 ## 3. 次にやること
 
-### 3.1 テストの盲点: ブラウザE2E
+### 3.1 ブラウザE2E: 土台はできた。承認フローとCSPはまだ
 
-CSPやcookie属性は「ブラウザへの指示」なので、サーバー側のテストでは効果を検証できない。
-`form-action` の不具合(後述)はこれで見逃した。現在 `SameSite=Lax` と `frame-ancestors 'none'` は
-**文字列としてしか検証されていない**。Playwright で `wrangler dev` に対して承認フローを1本通すのが
-本当の解決策。CI整備のタイミングで一緒にやるのが自然。
+PR #15 で Playwright を入れた(`e2e/`、`playwright.config.ts`)。`npm run e2e` で
+`wrangler dev` が自動起動し、ローカル D1 に対して2本走る。
 
-盲点はCSPに限らない。PR #7 のクイック追加の不具合(`＋` が装飾用の `<span>` で、フォームに
-submit ボタンが1つも無かった)は、API が正常なのでサーバー側テストは全部通っていた。
-**UIの操作可能性はサーバーテストでは検出できない**。E2Eを入れるときはCSPと一緒に拾いたい。
+1. Inbox でタスクを追加 → **リロード** → 詳細 → 削除。リロードを挟むので、React の state ではなく
+   D1 に届いたことを見ている
+2. 完了にすると Inbox から外れる(API 再取得で `status` も確認)
+
+これで **PR #7 型の不具合(UIの操作可能性)は拾える**。当時の `＋` が `<span>` でフォームに submit が
+無かった件は、いま同じことをすればテスト1が落ちる。
+
+**ただし当初の目的だったCSPと承認フローは、まだ手つかず**。`SameSite=Lax` と
+`frame-ancestors 'none'` は依然として文字列としてしか検証されていないし、`form-action` の
+リダイレクト遮断(5章)を再現する経路も無い。承認フローは `/authorize` を通る必要があり、
+そこは Access の内側なので、いまの「Access をバイパスする」構成のままでは届かない。次にやるなら:
+
+- `AUTH_REQUIRED=false` のまま `/authorize` まで通せるか(ローカルでは Access 自体が居ないので、
+  OAuth プロバイダ側の承認画面には到達できるはず)を確かめる
+- 承認 → リダイレクトの1本を通し、CSP がそのリダイレクトを止めないことを**ブラウザで**検証する
+- cookie 属性は `context.cookies()` で実物を読む
+
+E2Eの前提と穴:
+
+- **Access 層は対象外**。`e2e:server` が `AUTH_REQUIRED=false` を渡してバイパスしている
+  (`src/lib/access.ts` の分岐。`.dev.vars` と同じ経路)。本番ホストに向けるには service token が要る
+- ローカル D1 は実行をまたいで残るため、タスク名にプロセスごとの ID を混ぜ、`afterEach` がその ID で
+  掃引する。**`testId` はリトライ間でも実行間でも同じ値なので、それだけでは一意にならない**
+  (Codex ボットの指摘。同名タスクが2件になると strict mode で locator が壊れる)
+- 期限なしのタスクは「今日」ではなく Inbox に入る(`src/db/tasks.ts` の `listTasks`)。
+  だから2本とも Inbox 起点になっている
 
 ### 3.2 Phase 4 タスク4: 自動ブリーフィング
 
@@ -127,6 +152,20 @@ npx wrangler d1 execute lifegame --remote --command "SELECT * FROM revoked_grant
 SPAフォールバックで index.html を返し、`Content-Type: text/html` のためモジュールが実行されない。
 コンソールにエラーも出ないので原因が見えにくい。**再ビルドしたら dev サーバーを再起動する**。
 
+**vitest が Playwright のテストを拾う**
+`vitest run` の既定 include は `**/*.spec.ts` にも当たるので、`e2e/` を置くと `npm test` が
+Playwright のファイルを収集して落ちる。`vitest.config.ts` の `exclude` で切っている。
+このファイルを消すと再発する。
+
+**CI の Playwright キャッシュは `--with-deps` を付けると無意味になる**
+`~/.cache/ms-playwright` に入るのはブラウザバイナリだけで、`--with-deps` が入れる apt の
+システムパッケージはキャッシュの外にある。素直に「ヒット時は `install-deps` を実行」と書くと、
+未キャッシュ時の総コスト 23s のうち大半を占める apt を毎回払うことになり、実測で 28s → 30s と
+**キャッシュがあるほうが遅くなった**。ubuntu-latest には chromium が要るライブラリが既に入っている
+ので、いまは `--with-deps` なしにして 3s まで落としてある(ジョブ全体 67s → 39s)。
+将来ランナー像から必要なライブラリが落ちたら、フレークではなく起動失敗という形で確実に出るので、
+そのときは `--with-deps` に戻す。
+
 **コネクタのURL**
 Claude に登録するURLは末尾に `/mcp` が必要。付け忘れると「サーバーに接続できませんでした」。
 
@@ -167,7 +206,14 @@ DCR により Claude 側が自動で登録する。設定に必要なのはURL�
   PID の生存確認で監視し、死んでいたら `cancel` してから `--resume-last` で再開する
 - GitHub の Codex ボットは、**指摘が無いとき PR 本文に `+1` リアクションを付けるだけ**で
   レビューもコメントも残さない。`gh pr view` の reviews/comments は空のままなので、
-  `gh api repos/<owner>/<repo>/issues/<n>/reactions` を見ないとレビュー済みだと分からない
+  `gh api repos/<owner>/<repo>/issues/<n>/reactions` を見ないとレビュー済みだと分からない。
+  指摘があるときは逆に、review 本体は定型文だけで**中身はインラインコメント側にある**。
+  `gh api repos/<owner>/<repo>/pulls/<n>/comments` を見ること。PR #15 では P2 が1件付いた。
+  レビューは PR 作成から数分遅れて来るので、作成直後に空でも「無し」と判断しない
+- **フォーマッタの ignore 対象だけを触るコミットは pre-commit で落ちる**(だった)。oxfmt は
+  渡されたパスが全部 `ignorePatterns` に当たると exit 2 を返し、lint-staged がそれを
+  フォーマット違反として扱う。oxfmt の2エントリに `--no-error-on-unmatched-pattern` を足して解消済み。
+  `.claude/` がまさにこれに当たる
 - **`codex exec` をバックグラウンド(TTY なし)で回すときは `< /dev/null` を付ける**。
   付けないと、プロンプトを引数で渡していても標準入力からの追加入力を待ち続けて固まる。
   プロセスは生きたままで、ログは `Reading additional input from stdin...` の1行で止まる。
