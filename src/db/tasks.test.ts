@@ -67,11 +67,26 @@ class FakeStatement {
 
   async run(): Promise<Result> {
     if (this.sql.startsWith('UPDATE')) {
-      const id = Number(this.bindings.at(-1));
+      // The id is no longer the last binding: the optimistic-concurrency guards
+      // bind after it, so locate it by counting the SET placeholders.
+      const setPart =
+        this.sql.match(/UPDATE tasks SET (.+?)\s+WHERE/s)?.[1] ?? '';
+      const setBindingCount = (setPart.match(/\?/g) ?? []).length;
+      const id = Number(this.bindings[setBindingCount]);
       const target = this.database.rows.find(
         (candidate) => candidate.id === id,
       );
       if (!target) return this.database.result(0);
+
+      // Guards appear in the WHERE in a fixed order; a mismatch is the race the
+      // guard exists to catch, and must report zero rows rather than write.
+      let guardIndex = setBindingCount + 1;
+      for (const column of ['due_date', 'status', 'repeat_rule'] as const) {
+        if (!this.sql.includes(`${column} IS ?`)) continue;
+        if (target[column] !== this.bindings[guardIndex++])
+          return this.database.result(0);
+      }
+
       this.database.applyUpdate(this, target);
       return this.database.result(1);
     }

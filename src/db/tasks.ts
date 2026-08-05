@@ -278,18 +278,25 @@ export async function updateTask(
   // recurring, a concurrent PATCH clearing its due_date is rejected outright by
   // assertRepeatableDueDate, so guarding ordinary edits would only manufacture
   // false conflicts on fields that have nothing to do with the invariant.
-  const inheritedDueDate =
-    input.repeat_rule !== undefined &&
-    input.repeat_rule !== null &&
-    input.due_date === undefined;
+  const addsRule =
+    input.repeat_rule !== undefined && input.repeat_rule !== null;
+  const inheritedDueDate = addsRule && input.due_date === undefined;
+  // Adding a rule is only safe because the row was open — a concurrent
+  // completion would otherwise land a done recurring task with no child, since
+  // generation already decided not to run. The completion side of that same
+  // race inherits the rule state it read, so guard it too.
+  const inheritedStatus = addsRule && input.status === undefined;
   const inheritedRule =
-    input.due_date === null && input.repeat_rule === undefined;
+    input.repeat_rule === undefined &&
+    (input.due_date === null || input.status === 'done');
   const where = [
     'id = ?',
     ...(inheritedDueDate ? ['due_date IS ?'] : []),
+    ...(inheritedStatus ? ['status IS ?'] : []),
     ...(inheritedRule ? ['repeat_rule IS ?'] : []),
   ].join(' AND ');
   if (inheritedDueDate) bindings.push(current.due_date);
+  if (inheritedStatus) bindings.push(current.status);
   if (inheritedRule) bindings.push(current.repeat_rule);
 
   const result = await db

@@ -141,11 +141,21 @@ class FakeStatement {
 
     if (this.sql.startsWith('UPDATE')) {
       const updatePart =
-        this.sql.match(/UPDATE tasks SET (.+) WHERE id = \?$/)?.[1] ?? '';
+        this.sql.match(/UPDATE tasks SET (.+?)\s+WHERE/s)?.[1] ?? '';
       const clauses = updatePart.split(', ');
-      const id = this.bindings[this.bindings.length - 1];
+      // The optimistic-concurrency guards bind after the id, so count the SET
+      // placeholders instead of reading the last binding.
+      const setBindingCount = (updatePart.match(/\?/g) ?? []).length;
+      const id = this.bindings[setBindingCount];
       const task = this.database.rows.find((candidate) => candidate.id === id);
       if (!task) return this.result({ changes: 0 });
+
+      let guardIndex = setBindingCount + 1;
+      for (const column of ['due_date', 'status', 'repeat_rule'] as const) {
+        if (!this.sql.includes(`${column} IS ?`)) continue;
+        if (task[column] !== this.bindings[guardIndex++])
+          return this.result({ changes: 0 });
+      }
 
       let bindingIndex = 0;
       for (const clause of clauses) {

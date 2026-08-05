@@ -419,6 +419,49 @@ describe('API safety boundaries', () => {
     expect(renamed.status).toBe(200);
   });
 
+  // The other side of that race: completing a task believed to be one-off while
+  // a concurrent request turns it recurring. Generation already decided not to
+  // run, so landing this write would leave a done recurring task with no child.
+  it('refuses to complete a one-off task whose rule state has moved', async () => {
+    const stored = {
+      id: 1,
+      title: 'ゴミ出し',
+      note: '',
+      status: 'open' as const,
+      due_date: '2026-08-10',
+      due_time: null,
+      priority: 0,
+      tags: '',
+      repeat_rule: null,
+      repeat_child_id: null,
+      created_at: '2026-08-01 00:00:00',
+      updated_at: '2026-08-01 00:00:00',
+      completed_at: null,
+    };
+    const response = await app.request(
+      '/api/tasks/1',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'done' }),
+      },
+      env({
+        DB: {
+          prepare: () => ({
+            bind: () => ({
+              first: async () => stored,
+              // The guarded UPDATE misses: the task is recurring by now.
+              run: async () => ({ success: true, meta: { changes: 0 } }),
+              all: async () => ({ results: [] }),
+            }),
+          }),
+        } as unknown as D1Database,
+      }),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
   it('requires an allowlisted email when authentication is enabled', async () => {
     const response = await app.request(
       '/api/tasks',
