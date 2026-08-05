@@ -327,6 +327,50 @@ describe('API safety boundaries', () => {
     expect(withEdit.status).toBe(409);
   });
 
+  // Setting a rule validates against the due_date read a moment earlier. A
+  // concurrent PATCH clearing that due_date passes its own check against the
+  // same pre-race row, so the guard is the only thing keeping the pair from
+  // storing a recurring task that can never be completed.
+  it('refuses to add a repeat_rule when the due_date it relied on has moved', async () => {
+    const stored = {
+      id: 1,
+      title: 'ゴミ出し',
+      note: '',
+      status: 'open' as const,
+      due_date: '2026-08-10',
+      due_time: null,
+      priority: 0,
+      tags: '',
+      repeat_rule: null,
+      repeat_child_id: null,
+      created_at: '2026-08-01 00:00:00',
+      updated_at: '2026-08-01 00:00:00',
+      completed_at: null,
+    };
+    const response = await app.request(
+      '/api/tasks/1',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repeat_rule: 'daily' }),
+      },
+      env({
+        DB: {
+          prepare: () => ({
+            bind: () => ({
+              first: async () => stored,
+              // The guarded UPDATE misses: another request already nulled the date.
+              run: async () => ({ success: true, meta: { changes: 0 } }),
+              all: async () => ({ results: [] }),
+            }),
+          }),
+        } as unknown as D1Database,
+      }),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
   it('requires an allowlisted email when authentication is enabled', async () => {
     const response = await app.request(
       '/api/tasks',

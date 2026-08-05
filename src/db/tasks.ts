@@ -254,11 +254,39 @@ export async function updateTask(
   updates.push("updated_at = datetime('now')");
   bindings.push(id);
 
+  // The rule-needs-a-due-date invariant was checked against the row read above,
+  // and only half of it is in this request. A concurrent PATCH supplying the
+  // other half passes its own check against the same pre-race row, so without a
+  // guard the later write lands a recurring task with no due_date — which then
+  // throws on every attempt to complete it. Guard whichever half we inherited.
+  // Narrow to the request that introduces the rule: if the task was already
+  // recurring, a concurrent PATCH clearing its due_date is rejected outright by
+  // assertRepeatableDueDate, so guarding ordinary edits would only manufacture
+  // false conflicts on fields that have nothing to do with the invariant.
+  const inheritedDueDate =
+    input.repeat_rule !== undefined &&
+    input.repeat_rule !== null &&
+    input.due_date === undefined;
+  const inheritedRule =
+    input.due_date === null && input.repeat_rule === undefined;
+  const where = [
+    'id = ?',
+    ...(inheritedDueDate ? ['due_date IS ?'] : []),
+    ...(inheritedRule ? ['repeat_rule IS ?'] : []),
+  ].join(' AND ');
+  if (inheritedDueDate) bindings.push(current.due_date);
+  if (inheritedRule) bindings.push(current.repeat_rule);
+
   const result = await db
-    .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`)
+    .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE ${where}`)
     .bind(...bindings)
     .run();
-  if (!result.success || result.meta.changes === 0) return null;
+  if (!result.success) return null;
+  if (result.meta.changes === 0) {
+    const latest = await getTask(db, id);
+    if (!latest) return null;
+    throw new TaskConflictError();
+  }
   return getTask(db, id);
 }
 
