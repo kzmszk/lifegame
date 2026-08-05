@@ -208,10 +208,10 @@ describe('API safety boundaries', () => {
     expect(await added.json()).toEqual({ error: REPEAT_OPEN_ONLY_ERROR });
   });
 
-  // Validation refuses the states it can see; the constraint refuses the ones
-  // that only a race produces. This covers the second layer: a payload that
-  // passes validation and is still rejected by the database.
-  it('maps a CHECK violation during creation to 409', async () => {
+  // A new row races with nothing, so a constraint failure on insert means our
+  // validation and the schema disagree. Answering "conflict" would tell the
+  // caller to retry a request that cannot ever succeed.
+  it('does not disguise a creation-time CHECK failure as a conflict', async () => {
     const response = await app.request(
       '/api/tasks',
       {
@@ -236,11 +236,50 @@ describe('API safety boundaries', () => {
       }),
     );
 
+    expect(response.status).toBe(500);
+  });
+
+  // The rule is the one field that leaves the row it was read from. Cancelling
+  // a recurrence a concurrent completion already moved must not report success
+  // while the child keeps repeating.
+  it('refuses to cancel a recurrence that has moved to the child', async () => {
+    const stored = {
+      id: 1,
+      title: 'ゴミ出し',
+      note: '',
+      status: 'open' as const,
+      due_date: '2026-08-10',
+      due_time: null,
+      priority: 0,
+      tags: '',
+      repeat_rule: 'daily',
+      repeat_child_id: null,
+      created_at: '2026-08-01 00:00:00',
+      updated_at: '2026-08-01 00:00:00',
+      completed_at: null,
+    };
+    const response = await app.request(
+      '/api/tasks/1',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repeat_rule: null }),
+      },
+      env({
+        DB: {
+          prepare: () => ({
+            bind: () => ({
+              first: async () => stored,
+              // The guard misses: the completion already took the rule away.
+              run: async () => ({ success: true, meta: { changes: 0 } }),
+              all: async () => ({ results: [] }),
+            }),
+          }),
+        } as unknown as D1Database,
+      }),
+    );
+
     expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({
-      error:
-        'タスクが別の更新と競合しました。最新の内容を確認してからもう一度お試しください',
-    });
   });
 
   it('rejects clearing the due_date of an existing recurring task', async () => {

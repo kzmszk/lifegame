@@ -105,30 +105,27 @@ export async function createTask(
     Omit<TaskCreateInput, 'title'>,
 ): Promise<Task> {
   const status = input.status ?? 'open';
-  let result;
-  try {
-    result = await db
-      .prepare(
-        `INSERT INTO tasks
-        (title, note, status, due_date, due_time, priority, tags, repeat_rule, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
-      )
-      .bind(
-        input.title,
-        input.note ?? '',
-        status,
-        input.due_date ?? null,
-        input.due_time ?? null,
-        input.priority ?? 0,
-        input.tags ?? '',
-        input.repeat_rule ?? null,
-        status,
-      )
-      .run();
-  } catch (thrown) {
-    if (isCheckConstraintError(thrown)) throw new TaskConflictError();
-    throw thrown;
-  }
+  // No conflict mapping here on purpose. A new row races with nothing, so a
+  // constraint failure on insert means validation and the schema disagree —
+  // a defect to surface, not something the caller can usefully retry.
+  const result = await db
+    .prepare(
+      `INSERT INTO tasks
+      (title, note, status, due_date, due_time, priority, tags, repeat_rule, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
+    )
+    .bind(
+      input.title,
+      input.note ?? '',
+      status,
+      input.due_date ?? null,
+      input.due_time ?? null,
+      input.priority ?? 0,
+      input.tags ?? '',
+      input.repeat_rule ?? null,
+      status,
+    )
+    .run();
 
   const task = await getTask(db, Number(result.meta.last_row_id));
   if (!task) throw new Error('作成したタスクを取得できませんでした');
@@ -270,10 +267,21 @@ export async function updateTask(
   updates.push("updated_at = datetime('now')");
   bindings.push(id);
 
+  // The rule is the one field that can leave this row: completing the task
+  // hands it to the child. So a request that writes repeat_rule — turning the
+  // recurrence off, or changing it — has to confirm the rule is still here.
+  // Otherwise cancelling a recurrence that a concurrent completion already
+  // moved reports success against a parent that no longer owns it, while the
+  // child keeps repeating. The constraint cannot catch this: nothing invalid
+  // is stored, the write just lands on the wrong row.
+  const guardsRule = input.repeat_rule !== undefined;
+  const where = guardsRule ? 'id = ? AND repeat_rule IS ?' : 'id = ?';
+  if (guardsRule) bindings.push(current.repeat_rule);
+
   let result;
   try {
     result = await db
-      .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`)
+      .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE ${where}`)
       .bind(...bindings)
       .run();
   } catch (thrown) {
