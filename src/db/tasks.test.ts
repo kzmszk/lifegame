@@ -67,8 +67,7 @@ class FakeStatement {
 
   async run(): Promise<Result> {
     if (this.sql.startsWith('UPDATE')) {
-      // The id is no longer the last binding: the optimistic-concurrency guards
-      // bind after it, so locate it by counting the SET placeholders.
+      // The id follows the SET bindings.
       const setPart =
         this.sql.match(/UPDATE tasks SET (.+?)\s+WHERE/s)?.[1] ?? '';
       const setBindingCount = (setPart.match(/\?/g) ?? []).length;
@@ -77,15 +76,6 @@ class FakeStatement {
         (candidate) => candidate.id === id,
       );
       if (!target) return this.database.result(0);
-
-      // Guards appear in the WHERE in a fixed order; a mismatch is the race the
-      // guard exists to catch, and must report zero rows rather than write.
-      let guardIndex = setBindingCount + 1;
-      for (const column of ['due_date', 'status', 'repeat_rule'] as const) {
-        if (!this.sql.includes(`${column} IS ?`)) continue;
-        if (target[column] !== this.bindings[guardIndex++])
-          return this.database.result(0);
-      }
 
       this.database.applyUpdate(this, target);
       return this.database.result(1);
@@ -112,11 +102,7 @@ class FakeD1 {
     const setBindingCount = (setPart.match(/\?/g) ?? []).length;
     const sourceId = Number(sourceUpdate.bindings[setBindingCount]);
     const source = this.rows.find((candidate) => candidate.id === sourceId);
-    if (
-      !source ||
-      source.status !== 'open' ||
-      source.repeat_child_id !== null
-    ) {
+    if (!source || source.status !== 'open') {
       return [this.result(0), this.result(0), this.result(0)];
     }
 
@@ -135,7 +121,7 @@ class FakeD1 {
     }
 
     this.applyUpdate(sourceUpdate, source);
-    const [nextDueDate] = statements[1].bindings;
+    const [nextDueDate, nextRule] = statements[1].bindings;
     const childId = Math.max(...this.rows.map((candidate) => candidate.id)) + 1;
     this.rows.push(
       row({
@@ -143,6 +129,7 @@ class FakeD1 {
         id: childId,
         status: 'open',
         due_date: String(nextDueDate),
+        repeat_rule: String(nextRule),
         repeat_child_id: null,
         completed_at: null,
       }),
@@ -163,6 +150,10 @@ class FakeD1 {
       }
       if (trimmed.startsWith('repeat_child_id = -1')) {
         target.repeat_child_id = -1;
+        continue;
+      }
+      if (trimmed.startsWith('repeat_rule = NULL')) {
+        target.repeat_rule = null;
         continue;
       }
       if (trimmed.startsWith('completed_at = CASE')) {
@@ -201,7 +192,7 @@ describe('recurring task persistence', () => {
 
     expect(task).toMatchObject({
       status: 'done',
-      repeat_rule: 'daily',
+      repeat_rule: null,
       repeat_child_id: 2,
     });
     expect(database.rows).toHaveLength(2);
@@ -229,6 +220,19 @@ describe('recurring task persistence', () => {
     const completedAgain = await updateTask(db, 1, { status: 'done' });
 
     expect(database.rows).toHaveLength(2);
+    expect(database.rows[0].repeat_rule).toBeNull();
+    expect(completedAgain?.repeat_child_id).toBe(2);
+  });
+
+  it('does not spawn a second child when completion is repeated', async () => {
+    const database = new FakeD1([row()]);
+    const db = database as unknown as D1Database;
+
+    await updateTask(db, 1, { status: 'done' });
+    const completedAgain = await updateTask(db, 1, { status: 'done' });
+
+    expect(database.rows).toHaveLength(2);
+    expect(database.rows[0].repeat_rule).toBeNull();
     expect(completedAgain?.repeat_child_id).toBe(2);
   });
 
@@ -242,7 +246,7 @@ describe('recurring task persistence', () => {
 
     expect(task).toMatchObject({
       status: 'done',
-      repeat_rule: 'weekly:1',
+      repeat_rule: null,
       repeat_child_id: 2,
     });
     expect(database.rows[1]).toMatchObject({
@@ -254,6 +258,7 @@ describe('recurring task persistence', () => {
   it('returns the completed row when a concurrent completion already won', async () => {
     const database = new FakeD1([row()], () => {
       database.rows[0].status = 'done';
+      database.rows[0].repeat_rule = null;
       database.rows[0].repeat_child_id = 2;
     });
 
@@ -264,6 +269,7 @@ describe('recurring task persistence', () => {
     expect(task).toMatchObject({
       id: 1,
       status: 'done',
+      repeat_rule: null,
       repeat_child_id: 2,
     });
   });

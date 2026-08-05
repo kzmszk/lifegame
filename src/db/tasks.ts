@@ -5,12 +5,7 @@ import type {
   TaskStatus,
   TaskUpdateInput,
 } from '../shared/types';
-import {
-  assertRepeatableDueDate,
-  nextRepeatDate,
-  REPEAT_DONE_ON_UPDATE_ERROR,
-  RepeatRuleError,
-} from '../lib/repeat';
+import { assertRepeatState, nextRepeatDate } from '../lib/repeat';
 import { tokyoToday } from '../lib/time';
 
 export type TaskView = 'today' | 'inbox' | 'all';
@@ -42,6 +37,15 @@ interface TaskRow {
 
 const TASK_COLUMNS = `id, title, note, status, due_date, due_time, priority, tags,
   repeat_rule, repeat_child_id, created_at, updated_at, completed_at`;
+
+function isCheckConstraintError(thrown: unknown): boolean {
+  // D1 does not expose a structured constraint-error code, so its message is
+  // the only signal available for distinguishing this race from other errors.
+  return (
+    thrown instanceof Error &&
+    thrown.message.includes('CHECK constraint failed')
+  );
+}
 
 function toTask(row: TaskRow): Task {
   return {
@@ -101,24 +105,30 @@ export async function createTask(
     Omit<TaskCreateInput, 'title'>,
 ): Promise<Task> {
   const status = input.status ?? 'open';
-  const result = await db
-    .prepare(
-      `INSERT INTO tasks
-      (title, note, status, due_date, due_time, priority, tags, repeat_rule, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
-    )
-    .bind(
-      input.title,
-      input.note ?? '',
-      status,
-      input.due_date ?? null,
-      input.due_time ?? null,
-      input.priority ?? 0,
-      input.tags ?? '',
-      input.repeat_rule ?? null,
-      status,
-    )
-    .run();
+  let result;
+  try {
+    result = await db
+      .prepare(
+        `INSERT INTO tasks
+        (title, note, status, due_date, due_time, priority, tags, repeat_rule, completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
+      )
+      .bind(
+        input.title,
+        input.note ?? '',
+        status,
+        input.due_date ?? null,
+        input.due_time ?? null,
+        input.priority ?? 0,
+        input.tags ?? '',
+        input.repeat_rule ?? null,
+        status,
+      )
+      .run();
+  } catch (thrown) {
+    if (isCheckConstraintError(thrown)) throw new TaskConflictError();
+    throw thrown;
+  }
 
   const task = await getTask(db, Number(result.meta.last_row_id));
   if (!task) throw new Error('作成したタスクを取得できませんでした');
@@ -137,7 +147,7 @@ export async function updateTask(
     input.repeat_rule !== undefined ? input.repeat_rule : current.repeat_rule;
   const finalDueDate =
     input.due_date !== undefined ? input.due_date : current.due_date;
-  assertRepeatableDueDate(finalRule, finalDueDate);
+  const finalStatus = input.status ?? current.status;
 
   const updates: string[] = [];
   const bindings: Array<string | number | null> = [];
@@ -180,64 +190,49 @@ export async function updateTask(
     bindings.push(input.status);
   }
 
-  if (updates.length === 0) return current;
-
   const shouldGenerateChild =
     current.status === 'open' &&
     input.status === 'done' &&
     finalRule !== null &&
     finalRule !== undefined &&
-    current.repeat_child_id === null;
+    finalDueDate !== null;
 
-  // Adding a rule to a row that ends up done reaches the same dead series the
-  // create path already refuses: generation only runs on open→done, so this one
-  // would never produce a successor. Keyed on the request introducing the rule,
-  // so editing a completed recurring parent's other fields stays allowed.
-  const finalStatus = input.status ?? current.status;
-  if (
-    input.repeat_rule !== undefined &&
-    input.repeat_rule !== null &&
-    finalStatus === 'done' &&
-    !shouldGenerateChild
-  ) {
-    throw new RepeatRuleError(REPEAT_DONE_ON_UPDATE_ERROR);
-  }
+  // Validate the state that will actually be stored. A completion hands its
+  // rule to the child, so the row this request writes ends up without one.
+  assertRepeatState(
+    shouldGenerateChild ? null : finalRule,
+    finalStatus,
+    finalDueDate,
+  );
+
+  if (updates.length === 0) return current;
 
   if (shouldGenerateChild) {
-    if (finalDueDate === null) throw new RepeatRuleError('due_date が必要です');
     const nextDueDate = nextRepeatDate(finalRule, finalDueDate, tokyoToday());
-    const sourceUpdate = `${updates.join(', ')}, repeat_child_id = -1,
-      updated_at = datetime('now')`;
-    const sourceWhere = [
-      'id = ?',
-      "status = 'open'",
-      'repeat_child_id IS NULL',
-      ...(input.repeat_rule === undefined ? ['repeat_rule IS ?'] : []),
-      ...(input.due_date === undefined ? ['due_date IS ?'] : []),
-    ].join(' AND ');
+    const sourceUpdate = `${updates.join(', ')}, repeat_rule = NULL,
+      repeat_child_id = -1, updated_at = datetime('now')`;
     const sourceBindings: Array<string | number | null> = [
       ...bindings,
       id,
-      ...(input.repeat_rule === undefined ? [current.repeat_rule] : []),
-      ...(input.due_date === undefined ? [current.due_date] : []),
+      current.repeat_rule,
+      current.due_date,
     ];
     const statements = [
       db
         .prepare(
           `UPDATE tasks SET ${sourceUpdate}
-          WHERE ${sourceWhere}`,
+          WHERE id = ? AND status = 'open' AND repeat_rule IS ? AND due_date IS ?`,
         )
         .bind(...sourceBindings),
       db
         .prepare(
           `INSERT INTO tasks
           (title, note, status, due_date, due_time, priority, tags, repeat_rule, repeat_child_id, completed_at)
-          SELECT title, note, 'open', ?, due_time, priority, tags, repeat_rule, NULL, NULL
+          SELECT title, note, 'open', ?, due_time, priority, tags, ?, NULL, NULL
           FROM tasks
-          WHERE id = ? AND status = 'done' AND repeat_child_id = -1
-            AND repeat_rule IS NOT NULL AND due_date IS NOT NULL`,
+          WHERE id = ? AND repeat_child_id = -1`,
         )
-        .bind(nextDueDate, id),
+        .bind(nextDueDate, finalRule, id),
       db
         .prepare(
           `UPDATE tasks SET repeat_child_id = last_insert_rowid(), updated_at = datetime('now')
@@ -245,7 +240,13 @@ export async function updateTask(
         )
         .bind(id),
     ];
-    const results = await db.batch(statements);
+    let results;
+    try {
+      results = await db.batch(statements);
+    } catch (thrown) {
+      if (isCheckConstraintError(thrown)) throw new TaskConflictError();
+      throw thrown;
+    }
     if (!results[0]?.success) return null;
     if (results[0].meta.changes === 0) {
       const latest = await getTask(db, id);
@@ -269,40 +270,16 @@ export async function updateTask(
   updates.push("updated_at = datetime('now')");
   bindings.push(id);
 
-  // The rule-needs-a-due-date invariant was checked against the row read above,
-  // and only half of it is in this request. A concurrent PATCH supplying the
-  // other half passes its own check against the same pre-race row, so without a
-  // guard the later write lands a recurring task with no due_date — which then
-  // throws on every attempt to complete it. Guard whichever half we inherited.
-  // Narrow to the request that introduces the rule: if the task was already
-  // recurring, a concurrent PATCH clearing its due_date is rejected outright by
-  // assertRepeatableDueDate, so guarding ordinary edits would only manufacture
-  // false conflicts on fields that have nothing to do with the invariant.
-  const addsRule =
-    input.repeat_rule !== undefined && input.repeat_rule !== null;
-  const inheritedDueDate = addsRule && input.due_date === undefined;
-  // Adding a rule is only safe because the row was open — a concurrent
-  // completion would otherwise land a done recurring task with no child, since
-  // generation already decided not to run. The completion side of that same
-  // race inherits the rule state it read, so guard it too.
-  const inheritedStatus = addsRule && input.status === undefined;
-  const inheritedRule =
-    input.repeat_rule === undefined &&
-    (input.due_date === null || input.status === 'done');
-  const where = [
-    'id = ?',
-    ...(inheritedDueDate ? ['due_date IS ?'] : []),
-    ...(inheritedStatus ? ['status IS ?'] : []),
-    ...(inheritedRule ? ['repeat_rule IS ?'] : []),
-  ].join(' AND ');
-  if (inheritedDueDate) bindings.push(current.due_date);
-  if (inheritedStatus) bindings.push(current.status);
-  if (inheritedRule) bindings.push(current.repeat_rule);
-
-  const result = await db
-    .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE ${where}`)
-    .bind(...bindings)
-    .run();
+  let result;
+  try {
+    result = await db
+      .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`)
+      .bind(...bindings)
+      .run();
+  } catch (thrown) {
+    if (isCheckConstraintError(thrown)) throw new TaskConflictError();
+    throw thrown;
+  }
   if (!result.success) return null;
   if (result.meta.changes === 0) {
     const latest = await getTask(db, id);

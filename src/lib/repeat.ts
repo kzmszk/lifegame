@@ -7,16 +7,9 @@ export type RepeatRule =
 export const REPEAT_RULE_ERROR =
   'repeat_rule は daily、weekly:曜日、monthly:日、every:日数(1〜366)の形式で指定してください';
 export const REPEAT_DUE_DATE_ERROR = '繰り返しタスクには due_date が必要です';
-/**
- * The next occurrence is spawned by the open→done transition in `updateTask`.
- * A task created already done never makes that transition, so the series would
- * be born dead — no child, and nothing left to complete that would make one.
- */
-export const REPEAT_DONE_ON_CREATE_ERROR =
-  '繰り返しタスクは完了状態では作成できません';
-/** Same dead-series problem reached by adding the rule instead of creating it. */
-export const REPEAT_DONE_ON_UPDATE_ERROR =
-  '完了済みのタスクには繰り返しを設定できません';
+/** A done row keeps no rule: completion hands it to the next occurrence. */
+export const REPEAT_OPEN_ONLY_ERROR =
+  '繰り返しは未完了のタスクにのみ設定できます';
 
 const MAX_REPEAT_YEAR = 9999;
 const MAX_ADVANCE_ITERATIONS = 10_000;
@@ -123,13 +116,33 @@ export function validateRepeatRule(value: unknown): string | null {
   return isValidRepeatRule(value) ? null : REPEAT_RULE_ERROR;
 }
 
-export function assertRepeatableDueDate(
+/**
+ * The invariant the CHECK constraint enforces, stated once for error messages.
+ *
+ * The constraint is what makes this true; this is what explains it. Being
+ * exhaustive here is a nicety rather than a requirement — a state that slips
+ * past is refused by the database and surfaces as a conflict, not as a stored
+ * row. Callers pass the state that will actually be written, so a completion
+ * that hands its rule to the child passes a null rule.
+ */
+export function validateRepeatState(
   rule: RepeatRule | null | undefined,
+  status: 'open' | 'done',
+  dueDate: string | null,
+): string | null {
+  if (rule === null || rule === undefined) return null;
+  if (dueDate === null) return REPEAT_DUE_DATE_ERROR;
+  if (status === 'done') return REPEAT_OPEN_ONLY_ERROR;
+  return null;
+}
+
+export function assertRepeatState(
+  rule: RepeatRule | null | undefined,
+  status: 'open' | 'done',
   dueDate: string | null,
 ): void {
-  if (rule !== null && rule !== undefined && dueDate === null) {
-    throw new RepeatRuleError(REPEAT_DUE_DATE_ERROR);
-  }
+  const message = validateRepeatState(rule, status, dueDate);
+  if (message) throw new RepeatRuleError(message);
 }
 
 function nextAfter(rule: RepeatRule, fromDate: string): string {

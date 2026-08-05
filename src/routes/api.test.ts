@@ -3,9 +3,8 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { app } from '../app';
 import {
-  REPEAT_DONE_ON_CREATE_ERROR,
-  REPEAT_DONE_ON_UPDATE_ERROR,
   REPEAT_DUE_DATE_ERROR,
+  REPEAT_OPEN_ONLY_ERROR,
   REPEAT_RULE_ERROR,
 } from '../lib/repeat';
 
@@ -151,10 +150,10 @@ describe('API safety boundaries', () => {
     expect(await response.json()).toEqual({ error: REPEAT_DUE_DATE_ERROR });
   });
 
-  // The child is spawned by the open→done transition, which a task created
-  // already done never makes — the series would be born with no successor.
-  it('rejects creating a recurring task that is already done', async () => {
-    const response = await app.request(
+  // These are plain bad requests, not races. Letting them fall through to the
+  // constraint would answer "conflict" to someone who has nothing to retry.
+  it('explains a done recurring task rather than reporting a conflict', async () => {
+    const created = await app.request(
       '/api/tasks',
       {
         method: 'POST',
@@ -168,10 +167,79 @@ describe('API safety boundaries', () => {
       },
       env(),
     );
+    expect(created.status).toBe(400);
+    expect(await created.json()).toEqual({ error: REPEAT_OPEN_ONLY_ERROR });
 
-    expect(response.status).toBe(400);
+    const doneTask = {
+      id: 1,
+      title: 'ゴミ出し',
+      note: '',
+      status: 'done' as const,
+      due_date: '2026-08-10',
+      due_time: null,
+      priority: 0,
+      tags: '',
+      repeat_rule: null,
+      repeat_child_id: null,
+      created_at: '2026-08-01 00:00:00',
+      updated_at: '2026-08-01 00:00:00',
+      completed_at: '2026-08-01 01:00:00',
+    };
+    const added = await app.request(
+      '/api/tasks/1',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repeat_rule: 'daily' }),
+      },
+      env({
+        DB: {
+          prepare: () => ({
+            bind: () => ({
+              first: async () => doneTask,
+              run: async () => ({ success: true, meta: { changes: 1 } }),
+              all: async () => ({ results: [] }),
+            }),
+          }),
+        } as unknown as D1Database,
+      }),
+    );
+    expect(added.status).toBe(400);
+    expect(await added.json()).toEqual({ error: REPEAT_OPEN_ONLY_ERROR });
+  });
+
+  // Validation refuses the states it can see; the constraint refuses the ones
+  // that only a race produces. This covers the second layer: a payload that
+  // passes validation and is still rejected by the database.
+  it('maps a CHECK violation during creation to 409', async () => {
+    const response = await app.request(
+      '/api/tasks',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'ゴミ出し',
+          due_date: '2026-08-10',
+          repeat_rule: 'daily',
+        }),
+      },
+      env({
+        DB: {
+          prepare: () => ({
+            bind: () => ({
+              run: async () => {
+                throw new Error('CHECK constraint failed: tasks');
+              },
+            }),
+          }),
+        } as unknown as D1Database,
+      }),
+    );
+
+    expect(response.status).toBe(409);
     expect(await response.json()).toEqual({
-      error: REPEAT_DONE_ON_CREATE_ERROR,
+      error:
+        'タスクが別の更新と競合しました。最新の内容を確認してからもう一度お試しください',
     });
   });
 
@@ -275,7 +343,7 @@ describe('API safety boundaries', () => {
       due_time: null,
       priority: 0,
       tags: '',
-      repeat_rule: 'daily',
+      repeat_rule: null,
       repeat_child_id: 2,
       created_at: '2026-08-01 00:00:00',
       updated_at: '2026-08-01 00:00:00',
@@ -284,6 +352,7 @@ describe('API safety boundaries', () => {
     const open = {
       ...completed,
       status: 'open' as const,
+      repeat_rule: 'daily',
       repeat_child_id: null,
       completed_at: null,
     };
@@ -326,140 +395,6 @@ describe('API safety boundaries', () => {
     // The title was never written, so success here would drop the edit.
     const withEdit = await patch({ status: 'done', title: '新しい名前' });
     expect(withEdit.status).toBe(409);
-  });
-
-  // Setting a rule validates against the due_date read a moment earlier. A
-  // concurrent PATCH clearing that due_date passes its own check against the
-  // same pre-race row, so the guard is the only thing keeping the pair from
-  // storing a recurring task that can never be completed.
-  it('refuses to add a repeat_rule when the due_date it relied on has moved', async () => {
-    const stored = {
-      id: 1,
-      title: 'ゴミ出し',
-      note: '',
-      status: 'open' as const,
-      due_date: '2026-08-10',
-      due_time: null,
-      priority: 0,
-      tags: '',
-      repeat_rule: null,
-      repeat_child_id: null,
-      created_at: '2026-08-01 00:00:00',
-      updated_at: '2026-08-01 00:00:00',
-      completed_at: null,
-    };
-    const response = await app.request(
-      '/api/tasks/1',
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repeat_rule: 'daily' }),
-      },
-      env({
-        DB: {
-          prepare: () => ({
-            bind: () => ({
-              first: async () => stored,
-              // The guarded UPDATE misses: another request already nulled the date.
-              run: async () => ({ success: true, meta: { changes: 0 } }),
-              all: async () => ({ results: [] }),
-            }),
-          }),
-        } as unknown as D1Database,
-      }),
-    );
-
-    expect(response.status).toBe(409);
-  });
-
-  // Same dead series as the create path, reached by adding the rule instead.
-  it('refuses a repeat_rule on a done task but still allows editing a done recurring one', async () => {
-    const doneTask = (repeatRule: string | null, childId: number | null) => ({
-      id: 1,
-      title: 'ゴミ出し',
-      note: '',
-      status: 'done' as const,
-      due_date: '2026-08-10',
-      due_time: null,
-      priority: 0,
-      tags: '',
-      repeat_rule: repeatRule,
-      repeat_child_id: childId,
-      created_at: '2026-08-01 00:00:00',
-      updated_at: '2026-08-01 00:00:00',
-      completed_at: '2026-08-01 01:00:00',
-    });
-    const patch = (stored: ReturnType<typeof doneTask>, body: unknown) =>
-      app.request(
-        '/api/tasks/1',
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        },
-        env({
-          DB: {
-            prepare: () => ({
-              bind: () => ({
-                first: async () => stored,
-                run: async () => ({ success: true, meta: { changes: 1 } }),
-                all: async () => ({ results: [] }),
-              }),
-            }),
-          } as unknown as D1Database,
-        }),
-      );
-
-    const added = await patch(doneTask(null, null), { repeat_rule: 'daily' });
-    expect(added.status).toBe(400);
-    expect(await added.json()).toEqual({ error: REPEAT_DONE_ON_UPDATE_ERROR });
-
-    // The completed parent of a live series must stay editable.
-    const renamed = await patch(doneTask('daily', 2), { title: '新しい名前' });
-    expect(renamed.status).toBe(200);
-  });
-
-  // The other side of that race: completing a task believed to be one-off while
-  // a concurrent request turns it recurring. Generation already decided not to
-  // run, so landing this write would leave a done recurring task with no child.
-  it('refuses to complete a one-off task whose rule state has moved', async () => {
-    const stored = {
-      id: 1,
-      title: 'ゴミ出し',
-      note: '',
-      status: 'open' as const,
-      due_date: '2026-08-10',
-      due_time: null,
-      priority: 0,
-      tags: '',
-      repeat_rule: null,
-      repeat_child_id: null,
-      created_at: '2026-08-01 00:00:00',
-      updated_at: '2026-08-01 00:00:00',
-      completed_at: null,
-    };
-    const response = await app.request(
-      '/api/tasks/1',
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'done' }),
-      },
-      env({
-        DB: {
-          prepare: () => ({
-            bind: () => ({
-              first: async () => stored,
-              // The guarded UPDATE misses: the task is recurring by now.
-              run: async () => ({ success: true, meta: { changes: 0 } }),
-              all: async () => ({ results: [] }),
-            }),
-          }),
-        } as unknown as D1Database,
-      }),
-    );
-
-    expect(response.status).toBe(409);
   });
 
   it('requires an allowlisted email when authentication is enabled', async () => {

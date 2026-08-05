@@ -12,8 +12,7 @@ import { fieldsFromBody, validateFields } from '../lib/task-validation';
 import {
   normalizeRepeatRule,
   RepeatRuleError,
-  REPEAT_DONE_ON_CREATE_ERROR,
-  REPEAT_DUE_DATE_ERROR,
+  validateRepeatState,
 } from '../lib/repeat';
 import { listCalendarEvents, listHolidays } from '../lib/google-calendar';
 import type { CalendarEvent, Task, TaskCreateInput } from '../shared/types';
@@ -184,11 +183,19 @@ export async function createTaskForMcp(
     tags: typeof body.tags === 'string' ? body.tags : '',
     repeat_rule: normalizeRepeatRule(body.repeat_rule) ?? null,
   };
-  if (createInput.repeat_rule && createInput.due_date === null)
-    throw new McpToolError(REPEAT_DUE_DATE_ERROR);
-  if (createInput.repeat_rule && body.status === 'done')
-    throw new McpToolError(REPEAT_DONE_ON_CREATE_ERROR);
-  return createTask(db, createInput);
+  const repeatError = validateRepeatState(
+    createInput.repeat_rule ?? null,
+    typeof body.status === 'string' && body.status === 'done' ? 'done' : 'open',
+    createInput.due_date ?? null,
+  );
+  if (repeatError) throw new McpToolError(repeatError);
+  try {
+    return await createTask(db, createInput);
+  } catch (thrown) {
+    if (thrown instanceof TaskConflictError)
+      throw new McpToolError(thrown.message);
+    throw thrown;
+  }
 }
 
 export async function updateTaskForMcp(

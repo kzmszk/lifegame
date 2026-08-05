@@ -14,8 +14,7 @@ import { parse } from '../lib/parse';
 import {
   normalizeRepeatRule,
   RepeatRuleError,
-  REPEAT_DONE_ON_CREATE_ERROR,
-  REPEAT_DUE_DATE_ERROR,
+  validateRepeatState,
 } from '../lib/repeat';
 import { getAccessUser, isAccessAuthError } from '../lib/access';
 import { tokyoDayBounds, tokyoToday } from '../lib/time';
@@ -161,16 +160,24 @@ api.post('/tasks', async (c) => {
       status: parseStatus(body.status),
     };
   }
-  if (input.repeat_rule && input.due_date === null)
-    return error(c, REPEAT_DUE_DATE_ERROR, 400);
-  if (input.repeat_rule && input.status === 'done')
-    return error(c, REPEAT_DONE_ON_CREATE_ERROR, 400);
-  const task = await createTask(
-    c.env.DB,
-    input as Required<Pick<TaskCreateInput, 'title'>> &
-      Omit<TaskCreateInput, 'title'>,
+  const repeatError = validateRepeatState(
+    input.repeat_rule ?? null,
+    input.status ?? 'open',
+    input.due_date ?? null,
   );
-  return c.json({ task }, 201);
+  if (repeatError) return error(c, repeatError, 400);
+  try {
+    const task = await createTask(
+      c.env.DB,
+      input as Required<Pick<TaskCreateInput, 'title'>> &
+        Omit<TaskCreateInput, 'title'>,
+    );
+    return c.json({ task }, 201);
+  } catch (thrown) {
+    if (thrown instanceof TaskConflictError)
+      return error(c, thrown.message, 409);
+    throw thrown;
+  }
 });
 
 api.patch('/tasks/:id', async (c) => {
