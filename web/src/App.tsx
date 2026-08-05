@@ -8,6 +8,7 @@ import type {
   TaskStatus,
   TaskView,
 } from '../../src/shared/types';
+import type { RepeatRule } from '../../src/lib/repeat';
 import {
   createCalendarEvent,
   createTask,
@@ -33,6 +34,82 @@ interface PendingDraft {
   draft: TaskDraft;
   /** Voice drafts get a different hint, since misheard text is the usual worry. */
   source: 'voice' | 'text';
+}
+
+type RepeatFrequency = 'none' | 'daily' | 'weekly' | 'monthly' | 'every';
+
+interface RepeatFormValue {
+  frequency: RepeatFrequency;
+  weeklyDays: number[];
+  monthlyDay: number;
+  everyDays: number;
+}
+
+const WEEKDAY_OPTIONS = [
+  { value: 0, label: '日' },
+  { value: 1, label: '月' },
+  { value: 2, label: '火' },
+  { value: 3, label: '水' },
+  { value: 4, label: '木' },
+  { value: 5, label: '金' },
+  { value: 6, label: '土' },
+] as const;
+
+function clampInteger(value: number, minimum: number, maximum: number): number {
+  if (!Number.isFinite(value)) return minimum;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
+}
+
+function repeatFormValue(rule: RepeatRule | null): RepeatFormValue {
+  if (rule === 'daily') {
+    return { frequency: 'daily', weeklyDays: [1], monthlyDay: 1, everyDays: 1 };
+  }
+  if (rule?.startsWith('weekly:')) {
+    const weeklyDays = rule
+      .slice('weekly:'.length)
+      .split(',')
+      .map(Number)
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+      .sort((left, right) => left - right);
+    return {
+      frequency: 'weekly',
+      weeklyDays: weeklyDays.length > 0 ? weeklyDays : [1],
+      monthlyDay: 1,
+      everyDays: 1,
+    };
+  }
+  if (rule?.startsWith('monthly:')) {
+    return {
+      frequency: 'monthly',
+      weeklyDays: [1],
+      monthlyDay: clampInteger(Number(rule.slice('monthly:'.length)), 1, 31),
+      everyDays: 1,
+    };
+  }
+  if (rule?.startsWith('every:')) {
+    return {
+      frequency: 'every',
+      weeklyDays: [1],
+      monthlyDay: 1,
+      everyDays: clampInteger(Number(rule.slice('every:'.length)), 1, 366),
+    };
+  }
+  return { frequency: 'none', weeklyDays: [1], monthlyDay: 1, everyDays: 1 };
+}
+
+function repeatRuleFor(value: RepeatFormValue): RepeatRule | null {
+  if (value.frequency === 'none') return null;
+  if (value.frequency === 'daily') return 'daily';
+  if (value.frequency === 'weekly') {
+    const days = [...new Set(value.weeklyDays)]
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+      .sort((left, right) => left - right);
+    return days.length > 0 ? (`weekly:${days.join(',')}` as RepeatRule) : null;
+  }
+  if (value.frequency === 'monthly') {
+    return `monthly:${clampInteger(value.monthlyDay, 1, 31)}` as RepeatRule;
+  }
+  return `every:${clampInteger(value.everyDays, 1, 366)}` as RepeatRule;
 }
 
 function isTaskView(value: string | null): value is TaskView {
@@ -163,10 +240,10 @@ export default function App() {
   const handleCreate = useCallback(
     async (text: string) => {
       const parsed = await parseTask(text);
-      // A stated time means an appointment, which belongs on the calendar rather
-      // than in the task list. Writing to Google is the harder side to undo from
-      // here, so that branch always stops for confirmation; plain tasks do not.
-      if (parsed.due_time) {
+      // A stated time means an appointment, and recurrence needs a final chance
+      // to correct natural-language parsing. Both branches stop for confirmation;
+      // plain one-off tasks can still be added in one step.
+      if (parsed.due_time || parsed.repeat_rule !== null) {
         setDraft({ draft: parsed, source: 'text' });
         return;
       }
@@ -499,6 +576,123 @@ function QuickAdd({
   );
 }
 
+function RepeatRuleFields({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: RepeatFormValue;
+  onChange: (value: RepeatFormValue) => void;
+  disabled?: boolean;
+}) {
+  const setFrequency = (frequency: RepeatFrequency) =>
+    onChange({
+      ...value,
+      frequency,
+      weeklyDays: value.weeklyDays.length > 0 ? value.weeklyDays : [1],
+    });
+  const setWeekday = (weekday: number, checked: boolean) => {
+    const weeklyDays = checked
+      ? [...new Set([...value.weeklyDays, weekday])].sort(
+          (left, right) => left - right,
+        )
+      : value.weeklyDays.length > 1
+        ? value.weeklyDays.filter((day) => day !== weekday)
+        : value.weeklyDays;
+    onChange({ ...value, weeklyDays });
+  };
+
+  return (
+    <fieldset className="repeat-settings" disabled={disabled}>
+      <legend>繰り返し</legend>
+      <label>
+        <span>頻度</span>
+        <select
+          value={value.frequency}
+          onChange={(event) =>
+            setFrequency(event.target.value as RepeatFrequency)
+          }
+          aria-label="繰り返しの頻度"
+        >
+          <option value="none">なし</option>
+          <option value="daily">毎日</option>
+          <option value="weekly">毎週</option>
+          <option value="monthly">毎月</option>
+          <option value="every">N日ごと</option>
+        </select>
+      </label>
+      {value.frequency === 'weekly' && (
+        <div className="repeat-weekdays" role="group" aria-label="繰り返す曜日">
+          <span>曜日</span>
+          <div className="weekday-options">
+            {WEEKDAY_OPTIONS.map((weekday) => {
+              const isOnlySelectedDay =
+                value.weeklyDays.length === 1 &&
+                value.weeklyDays[0] === weekday.value;
+              return (
+                <label className="weekday-option" key={weekday.value}>
+                  <input
+                    type="checkbox"
+                    checked={value.weeklyDays.includes(weekday.value)}
+                    disabled={isOnlySelectedDay}
+                    onChange={(event) =>
+                      setWeekday(weekday.value, event.target.checked)
+                    }
+                  />
+                  <span>{weekday.label}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {value.frequency === 'monthly' && (
+        <label className="repeat-number">
+          <span>毎月の日</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="1"
+            max="31"
+            value={value.monthlyDay}
+            onChange={(event) =>
+              onChange({
+                ...value,
+                monthlyDay: clampInteger(Number(event.target.value), 1, 31),
+              })
+            }
+          />
+          <span>日</span>
+        </label>
+      )}
+      {value.frequency === 'every' && (
+        <label className="repeat-number">
+          <span>間隔</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min="1"
+            max="366"
+            value={value.everyDays}
+            onChange={(event) =>
+              onChange({
+                ...value,
+                everyDays: clampInteger(Number(event.target.value), 1, 366),
+              })
+            }
+          />
+          <span>日ごと</span>
+        </label>
+      )}
+      {value.frequency !== 'none' && (
+        <p className="repeat-help">
+          完了すると次回のタスクを1件作成します。なしを選ぶと以後は作成しません。
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
 function TaskList({
   tasks,
   view,
@@ -563,7 +757,9 @@ function TaskCard({
         {(task.due_date ||
           task.due_time ||
           task.priority === 1 ||
-          task.tags) && (
+          task.tags ||
+          task.repeat_rule !== null ||
+          task.repeat_child_id !== null) && (
           <span className="task-meta">
             {task.due_date && (
               <span className="due">
@@ -573,6 +769,11 @@ function TaskCard({
             )}
             {task.priority === 1 && <span className="priority">高</span>}
             {task.tags && <span>{task.tags}</span>}
+            {(task.repeat_rule !== null || task.repeat_child_id !== null) && (
+              <span className="repeat-mark" aria-label="繰り返しタスク">
+                ↻
+              </span>
+            )}
           </span>
         )}
       </button>
@@ -763,7 +964,21 @@ function formatConnectionDate(timestamp: number): string {
 type EditableTask = Pick<
   Task,
   'title' | 'note' | 'due_date' | 'due_time' | 'priority' | 'tags'
->;
+> & {
+  repeat: RepeatFormValue;
+};
+
+function editableTask(task: Task): EditableTask {
+  return {
+    title: task.title,
+    note: task.note,
+    due_date: task.due_date,
+    due_time: task.due_time,
+    priority: task.priority,
+    tags: task.tags,
+    repeat: repeatFormValue(task.repeat_rule),
+  };
+}
 
 function TaskDetail({
   id,
@@ -789,14 +1004,7 @@ function TaskDetail({
       .then((loaded) => {
         if (cancelled) return;
         setTask(loaded);
-        setForm({
-          title: loaded.title,
-          note: loaded.note,
-          due_date: loaded.due_date,
-          due_time: loaded.due_time,
-          priority: loaded.priority,
-          tags: loaded.tags,
-        });
+        setForm(editableTask(loaded));
       })
       .catch((error) =>
         onError(
@@ -845,16 +1053,14 @@ function TaskDetail({
     if (!form.title.trim() || saving) return;
     setSaving(true);
     try {
-      const saved = await updateTask(id, { ...form, title: form.title.trim() });
-      setTask(saved);
-      setForm({
-        title: saved.title,
-        note: saved.note,
-        due_date: saved.due_date,
-        due_time: saved.due_time,
-        priority: saved.priority,
-        tags: saved.tags,
+      const { repeat, ...fields } = form;
+      const saved = await updateTask(id, {
+        ...fields,
+        title: form.title.trim(),
+        repeat_rule: repeatRuleFor(repeat),
       });
+      setTask(saved);
+      setForm(editableTask(saved));
     } catch (error) {
       onError(error instanceof Error ? error.message : '保存に失敗しました');
     } finally {
@@ -950,6 +1156,16 @@ function TaskDetail({
             />
           </label>
         </div>
+        <RepeatRuleFields
+          value={form.repeat}
+          onChange={(repeat) => setField('repeat', repeat)}
+          disabled={task.status === 'done'}
+        />
+        {task.status === 'done' && (
+          <p className="repeat-help">
+            完了したタスクは繰り返しを変更できません。次回のタスクを編集してください。
+          </p>
+        )}
         <label className="switch-row">
           <span>優先度を上げる</span>
           <input
@@ -992,21 +1208,30 @@ function DraftDialog({
 }) {
   const [value, setValue] = useState(draft);
   // A stated time is what distinguishes an appointment from a task, so it picks
-  // the default. The toggle is the escape hatch for the times it guesses wrong.
+  // the default. Recurrences are tasks, since Google Calendar is intentionally
+  // outside this app's repeat-task model.
   const [kind, setKind] = useState<DraftKind>(
-    draft.due_time ? 'event' : 'task',
+    draft.repeat_rule !== null || !draft.due_time ? 'task' : 'event',
+  );
+  const [repeat, setRepeat] = useState(() =>
+    repeatFormValue(draft.repeat_rule),
   );
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const set = <K extends keyof TaskDraft>(key: K, next: TaskDraft[K]) =>
     setValue((current) => ({ ...current, [key]: next }));
+  const isRecurring = repeat.frequency !== 'none';
+  const setRepeatValue = (next: RepeatFormValue) => {
+    setRepeat(next);
+    if (next.frequency !== 'none') setKind('task');
+  };
   const incomplete = kind === 'event' && (!value.due_date || !value.due_time);
   const confirm = async () => {
     if (!value.title.trim() || incomplete || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     try {
-      await onConfirm(value, kind);
+      await onConfirm({ ...value, repeat_rule: repeatRuleFor(repeat) }, kind);
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -1039,28 +1264,32 @@ function DraftDialog({
         <p className="draft-hint">
           {source === 'voice'
             ? '音声から読み取った内容です。必要ならここで直せます。'
-            : '時刻があるので予定として登録します。必要ならここで直せます。'}
+            : isRecurring
+              ? '繰り返しとして読み取りました。必要ならここで直せます。'
+              : '時刻があるので予定として登録します。必要ならここで直せます。'}
         </p>
-        <div className="kind-switch" role="group" aria-label="登録先">
-          <button
-            type="button"
-            className={kind === 'task' ? 'is-active' : ''}
-            aria-pressed={kind === 'task'}
-            disabled={saving}
-            onClick={() => setKind('task')}
-          >
-            タスク
-          </button>
-          <button
-            type="button"
-            className={kind === 'event' ? 'is-active' : ''}
-            aria-pressed={kind === 'event'}
-            disabled={saving}
-            onClick={() => setKind('event')}
-          >
-            予定
-          </button>
-        </div>
+        {!isRecurring && (
+          <div className="kind-switch" role="group" aria-label="登録先">
+            <button
+              type="button"
+              className={kind === 'task' ? 'is-active' : ''}
+              aria-pressed={kind === 'task'}
+              disabled={saving}
+              onClick={() => setKind('task')}
+            >
+              タスク
+            </button>
+            <button
+              type="button"
+              className={kind === 'event' ? 'is-active' : ''}
+              aria-pressed={kind === 'event'}
+              disabled={saving}
+              onClick={() => setKind('event')}
+            >
+              予定
+            </button>
+          </div>
+        )}
         <label>
           <span>タイトル</span>
           <input
@@ -1091,6 +1320,13 @@ function DraftDialog({
           <p className="draft-warning">
             予定にするには日付と時刻の両方が必要です。
           </p>
+        )}
+        {kind === 'task' && (
+          <RepeatRuleFields
+            value={repeat}
+            onChange={setRepeatValue}
+            disabled={saving}
+          />
         )}
         <label>
           <span>メモ</span>

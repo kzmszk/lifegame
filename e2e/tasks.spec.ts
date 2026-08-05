@@ -81,3 +81,51 @@ test('completing a task takes it out of Inbox', async ({ page, request }) => {
   const reread = await request.get(`/api/tasks/${task.id}`);
   expect(((await reread.json()) as { task: Task }).task.status).toBe('done');
 });
+
+test('a recurring task created in the UI generates and persists its next occurrence', async ({
+  page,
+  request,
+}) => {
+  const title = uniqueTitle('daily repeat');
+  await page.goto('/');
+
+  await page
+    .getByRole('textbox', { name: 'タスクを追加' })
+    .fill(`毎日 ${title}`);
+  await page.getByRole('button', { name: 'このタスクを追加' }).click();
+
+  const dialog = page.getByRole('dialog', { name: '内容を確認' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('繰り返しの頻度')).toHaveValue('daily');
+  await dialog.getByRole('button', { name: 'この内容で追加' }).click();
+
+  const currentCard = page.locator('.task-card', { hasText: title });
+  await expect(currentCard).toBeVisible();
+  await expect(currentCard.getByLabel('繰り返しタスク')).toBeVisible();
+  await currentCard.getByRole('button', { name: '完了にする' }).click();
+
+  // Reload before checking the list so the generated task must come from D1,
+  // not from React state left behind by the completion request.
+  await page.reload();
+  await page.goto('/all');
+
+  const recurringCards = page.locator('.task-card', { hasText: title });
+  await expect(recurringCards).toHaveCount(2);
+  const nextCard = recurringCards.filter({
+    has: page.getByRole('button', { name: '完了にする' }),
+  });
+  await expect(nextCard).toHaveCount(1);
+  await expect(nextCard.getByLabel('繰り返しタスク')).toBeVisible();
+
+  const response = await request.get('/api/tasks?view=all');
+  expect(response.ok()).toBeTruthy();
+  const { tasks } = (await response.json()) as { tasks: Task[] };
+  const occurrences = tasks.filter((task) => task.title === title);
+  expect(occurrences).toHaveLength(2);
+  const completed = occurrences.find((task) => task.status === 'done');
+  const next = occurrences.find((task) => task.status === 'open');
+  expect(completed?.repeat_rule).toBeNull();
+  expect(next?.repeat_rule).toBe('daily');
+  expect(completed?.repeat_child_id).toBe(next?.id);
+  expect(next?.due_date).not.toBe(completed?.due_date);
+});
