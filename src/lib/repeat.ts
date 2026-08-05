@@ -14,6 +14,9 @@ export const REPEAT_DUE_DATE_ERROR = '繰り返しタスクには due_date が�
  */
 export const REPEAT_DONE_ON_CREATE_ERROR =
   '繰り返しタスクは完了状態では作成できません';
+/** Same dead-series problem reached by adding the rule instead of creating it. */
+export const REPEAT_DONE_ON_UPDATE_ERROR =
+  '完了済みのタスクには繰り返しを設定できません';
 
 const MAX_REPEAT_YEAR = 9999;
 const MAX_ADVANCE_ITERATIONS = 10_000;

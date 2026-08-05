@@ -8,6 +8,7 @@ import type {
 import {
   assertRepeatableDueDate,
   nextRepeatDate,
+  REPEAT_DONE_ON_UPDATE_ERROR,
   RepeatRuleError,
 } from '../lib/repeat';
 import { tokyoToday } from '../lib/time';
@@ -187,6 +188,20 @@ export async function updateTask(
     finalRule !== null &&
     finalRule !== undefined &&
     current.repeat_child_id === null;
+
+  // Adding a rule to a row that ends up done reaches the same dead series the
+  // create path already refuses: generation only runs on open→done, so this one
+  // would never produce a successor. Keyed on the request introducing the rule,
+  // so editing a completed recurring parent's other fields stays allowed.
+  const finalStatus = input.status ?? current.status;
+  if (
+    input.repeat_rule !== undefined &&
+    input.repeat_rule !== null &&
+    finalStatus === 'done' &&
+    !shouldGenerateChild
+  ) {
+    throw new RepeatRuleError(REPEAT_DONE_ON_UPDATE_ERROR);
+  }
 
   if (shouldGenerateChild) {
     if (finalDueDate === null) throw new RepeatRuleError('due_date が必要です');

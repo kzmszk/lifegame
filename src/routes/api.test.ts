@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { app } from '../app';
 import {
   REPEAT_DONE_ON_CREATE_ERROR,
+  REPEAT_DONE_ON_UPDATE_ERROR,
   REPEAT_DUE_DATE_ERROR,
   REPEAT_RULE_ERROR,
 } from '../lib/repeat';
@@ -369,6 +370,53 @@ describe('API safety boundaries', () => {
     );
 
     expect(response.status).toBe(409);
+  });
+
+  // Same dead series as the create path, reached by adding the rule instead.
+  it('refuses a repeat_rule on a done task but still allows editing a done recurring one', async () => {
+    const doneTask = (repeatRule: string | null, childId: number | null) => ({
+      id: 1,
+      title: 'ゴミ出し',
+      note: '',
+      status: 'done' as const,
+      due_date: '2026-08-10',
+      due_time: null,
+      priority: 0,
+      tags: '',
+      repeat_rule: repeatRule,
+      repeat_child_id: childId,
+      created_at: '2026-08-01 00:00:00',
+      updated_at: '2026-08-01 00:00:00',
+      completed_at: '2026-08-01 01:00:00',
+    });
+    const patch = (stored: ReturnType<typeof doneTask>, body: unknown) =>
+      app.request(
+        '/api/tasks/1',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        env({
+          DB: {
+            prepare: () => ({
+              bind: () => ({
+                first: async () => stored,
+                run: async () => ({ success: true, meta: { changes: 1 } }),
+                all: async () => ({ results: [] }),
+              }),
+            }),
+          } as unknown as D1Database,
+        }),
+      );
+
+    const added = await patch(doneTask(null, null), { repeat_rule: 'daily' });
+    expect(added.status).toBe(400);
+    expect(await added.json()).toEqual({ error: REPEAT_DONE_ON_UPDATE_ERROR });
+
+    // The completed parent of a live series must stay editable.
+    const renamed = await patch(doneTask('daily', 2), { title: '新しい名前' });
+    expect(renamed.status).toBe(200);
   });
 
   it('requires an allowlisted email when authentication is enabled', async () => {
