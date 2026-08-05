@@ -98,8 +98,8 @@ E2Eの前提と穴:
 
 - **Access 層は対象外**。`e2e:server` が `AUTH_REQUIRED=false` を渡してバイパスしている
   (`src/lib/access.ts` の分岐。`.dev.vars` と同じ経路)。`handleAuthorize` は先頭で
-  `getAccessUser` を呼ぶだけなので、これだけで `/authorize` に届く。本番ホストに向けるには
-  service token が要る。**いま残っている穴はここだけ**
+  `getAccessUser` を呼ぶだけなので、これだけで `/authorize` に届く。
+  **ここは service token で塞がないと決めた**(下記)
 - `frame-ancestors` の iframe テストは**意図的に入れていない**。承認画面は同じポリシーを `<meta>`
   でも出しているが、Chrome は `frame-ancestors` と `report-uri` を meta 経由では無視する
   (コンソールに警告が出る)。効いているのはヘッダーだけなので、ヘッダーを直接見ている。
@@ -111,6 +111,43 @@ E2Eの前提と穴:
   誰も回収しに来ない。DCR クライアントは KV に7日 TTL で残るが、これは溜まるだけで後続を汚さない
 - 期限なしのタスクは「今日」ではなく Inbox に入る(`src/db/tasks.ts` の `listTasks`)。
   だから最初の2本とも Inbox 起点になっている
+
+#### service token は使わないと決めた (2026-08-05)
+
+Access 層を E2E で踏むには Cloudflare の service token が要る。手順自体は30分程度だが、
+付いてくるものが3つあり、単一ユーザーのアプリに対して割に合わないと判断した。
+
+- **本番の認証コードに service token 用の分岐が要る**。service token の JWT には `email`
+  クレームが無く `common_name` が入るので、`ALLOWED_EMAIL` と突き合わせる現在の
+  `getAccessUser` は通らない。認証層をテストするために認証層を緩めることになる
+- **テストが本番の D1 に書き込む**。いまの E2E はタスクを作って消す
+- **CI に本番の資格情報を置く**ことになる。Access を素通りできる鍵
+
+**JWT 検証のロジック自体は既にユニットテストが押さえている**(`src/routes/api.test.ts` に10本。
+audience 違い、issuer 違い、期限切れ、JWKS 外の鍵、許可外の email、ヘッダーへのフォールバック
+禁止など)。塞げていないのは**設定**のほうで、その設定ミスは毎朝アプリを開けば分かる。
+
+#### 代わりに `npm run smoke` を置いた
+
+デプロイ後の外形チェック(`scripts/smoke.mjs`)。未認証で見える範囲だけを確認する。
+
+```sh
+npm run smoke                              # 本番
+npm run smoke -- https://example.workers.dev
+```
+
+拾えるもの: どのパスが Access の内側で、どれが Bypass か。**`/authorize` が Access の内側に
+残っていること**(Bypass に落ちると誰でも承認できる)。OAuth の探索が成立すること。
+広告している `scopes_supported`。
+
+拾えないもの: **`ACCESS_AUD` の取り違え**。未認証だと Access が Worker の手前で止めるので、
+間違っていても同じ 302 が返る。判定はブラウザで `/` を開くしかない(1章に既述)。
+
+実装で2点、消すと意味が無くなるものがある。**リダイレクトを追わないこと** —
+追うと Access のログイン画面の 200 を拾い、保護されたパスを「到達できる」と報告する。
+**探索の入口は決め打ちしないこと** — `/mcp` の 401 が `WWW-Authenticate` で名指しする
+`resource_metadata` を辿る。`/.well-known/*` はワイルドカードで Bypass しているので、
+1パスを決め打ちすると、ルールがそこだけに狭められた事故を見逃す。
 
 ### 3.2 Phase 4 タスク4: 自動ブリーフィング
 
