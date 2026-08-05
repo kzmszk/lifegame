@@ -70,6 +70,11 @@ describe('parse', () => {
       due_date: '2026-08-03',
       repeat_rule: 'weekly:1',
     });
+    expect(parse('毎週 月曜 ゴミ出し', now)).toMatchObject({
+      title: 'ゴミ出し',
+      due_date: '2026-08-03',
+      repeat_rule: 'weekly:1',
+    });
   });
 
   it('parses monthly recurrence and chooses its next occurrence', () => {

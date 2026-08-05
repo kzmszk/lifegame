@@ -1076,6 +1076,14 @@ function TaskDetail({
         status: task.status === 'done' ? 'open' : 'done',
       });
       setTask(saved);
+      // Completion moves the rule to the generated child. Keep unrelated
+      // unsaved edits, but replace the form's stale recurrence state so a later
+      // save cannot try to put the rule back onto the completed parent.
+      setForm((current) =>
+        current
+          ? { ...current, repeat: repeatFormValue(saved.repeat_rule) }
+          : current,
+      );
     } catch (error) {
       onError(error instanceof Error ? error.message : '更新に失敗しました');
     } finally {
@@ -1225,7 +1233,11 @@ function DraftDialog({
     setRepeat(next);
     if (next.frequency !== 'none') setKind('task');
   };
-  const incomplete = kind === 'event' && (!value.due_date || !value.due_time);
+  const incompleteEvent =
+    kind === 'event' && (!value.due_date || !value.due_time);
+  const missingRepeatDueDate =
+    kind === 'task' && isRecurring && !value.due_date;
+  const incomplete = incompleteEvent || missingRepeatDueDate;
   const confirm = async () => {
     if (!value.title.trim() || incomplete || savingRef.current) return;
     savingRef.current = true;
@@ -1316,10 +1328,13 @@ function DraftDialog({
             />
           </label>
         </div>
-        {incomplete && (
+        {incompleteEvent && (
           <p className="draft-warning">
             予定にするには日付と時刻の両方が必要です。
           </p>
+        )}
+        {missingRepeatDueDate && (
+          <p className="draft-warning">繰り返しタスクには期限が必要です。</p>
         )}
         {kind === 'task' && (
           <RepeatRuleFields

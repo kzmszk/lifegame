@@ -153,7 +153,7 @@ export function parse(text: string, now: Date = new Date()): TaskDraft {
   // this pass, "毎週月曜 ゴミ出し" becomes a one-off Monday task whose title
   // still starts with "毎週".
   const weeklyRepeatMatch = remaining.match(
-    /毎週(?:の)?([月火水木金土日])(?:曜日|曜)/,
+    /毎週\s*(?:の\s*)?([月火水木金土日])(?:曜日|曜)/,
   );
   const monthlyRepeatMatch = remaining.match(/毎月\s*(\d{1,2})日/);
   const everyRepeatMatch = remaining.match(/(\d{1,3})日ごと/);
