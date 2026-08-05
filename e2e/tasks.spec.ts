@@ -82,6 +82,32 @@ test('completing a task takes it out of Inbox', async ({ page, request }) => {
   expect(((await reread.json()) as { task: Task }).task.status).toBe('done');
 });
 
+test('task details require a due date before enabling recurrence', async ({
+  page,
+  request,
+}) => {
+  const title = uniqueTitle('repeat needs due date');
+  const task = await createTask(request, title);
+
+  await page.goto(`/tasks/${task.id}?from=inbox`);
+  await page.getByLabel('繰り返しの頻度').selectOption('daily');
+
+  await expect(
+    page.getByText('繰り返しタスクには期限が必要です。'),
+  ).toBeVisible();
+  const save = page.getByRole('button', { name: '変更を保存' });
+  await expect(save).toBeDisabled();
+
+  await page.getByLabel('期限').fill('2026-08-05');
+  await expect(save).toBeEnabled();
+  await save.click();
+
+  const reread = await request.get(`/api/tasks/${task.id}`);
+  const saved = ((await reread.json()) as { task: Task }).task;
+  expect(saved.repeat_rule).toBe('daily');
+  expect(saved.due_date).toBe('2026-08-05');
+});
+
 test('a recurring task created in the UI generates and persists its next occurrence', async ({
   page,
   request,

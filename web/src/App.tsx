@@ -1048,9 +1048,11 @@ function TaskDetail({
     key: K,
     value: EditableTask[K],
   ) => setForm((current) => (current ? { ...current, [key]: value } : current));
+  const missingRepeatDueDate =
+    repeatRuleFor(form.repeat) !== null && form.due_date === null;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!form.title.trim() || saving) return;
+    if (!form.title.trim() || missingRepeatDueDate || saving) return;
     setSaving(true);
     try {
       const { repeat, ...fields } = form;
@@ -1169,6 +1171,9 @@ function TaskDetail({
           onChange={(repeat) => setField('repeat', repeat)}
           disabled={task.status === 'done'}
         />
+        {missingRepeatDueDate && (
+          <p className="draft-warning">繰り返しタスクには期限が必要です。</p>
+        )}
         {task.status === 'done' && (
           <p className="repeat-help">
             完了したタスクは繰り返しを変更できません。次回のタスクを編集してください。
@@ -1192,7 +1197,10 @@ function TaskDetail({
             placeholder="仕事, 個人"
           />
         </label>
-        <button className="button primary save-button" disabled={saving}>
+        <button
+          className="button primary save-button"
+          disabled={saving || missingRepeatDueDate}
+        >
           {saving ? '保存中…' : '変更を保存'}
         </button>
       </form>
