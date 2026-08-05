@@ -14,6 +14,7 @@ import {
   updateTaskForMcp,
 } from './tools';
 import { assertMcpScope } from './auth';
+import { REPEAT_DUE_DATE_ERROR } from '../lib/repeat';
 import type { Env } from '../env';
 
 interface Row {
@@ -25,6 +26,8 @@ interface Row {
   due_time: string | null;
   priority: number;
   tags: string;
+  repeat_rule: string | null;
+  repeat_child_id: number | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -45,6 +48,8 @@ const row = (overrides: Partial<Row>): Row => ({
   due_time: null,
   priority: 0,
   tags: '',
+  repeat_rule: null,
+  repeat_child_id: null,
   created_at: '2026-08-01 00:00:00',
   updated_at: '2026-08-01 00:00:00',
   completed_at: null,
@@ -112,6 +117,7 @@ class FakeStatement {
         dueTime,
         priority,
         tags,
+        repeatRule,
         completedStatus,
       ] = this.bindings;
       const id = Math.max(0, ...this.database.rows.map((task) => task.id)) + 1;
@@ -125,6 +131,7 @@ class FakeStatement {
           due_time: dueTime as string | null,
           priority: Number(priority),
           tags: String(tags),
+          repeat_rule: repeatRule as string | null,
           completed_at:
             completedStatus === 'done' ? '2026-08-03 01:00:00' : null,
         }),
@@ -324,11 +331,30 @@ describe('MCP tool handlers', () => {
       [{ title: 'x', priority: 2 }, 'priority'],
       [{ title: 'x', status: 'paused' }, 'status'],
       [{ title: 'x', completed_at: null }, 'completed_at'],
+      [{ title: 'x', repeat_rule: 'weekly:9' }, 'repeat_rule'],
     ];
 
     for (const [input, field] of invalidCases) {
       await expect(createTaskForMcp(db, input)).rejects.toThrow(field);
     }
+  });
+
+  // The rule needs an anchor to advance from; without one the task would
+  // complete once and never come back.
+  it('refuses a recurring task with no due_date', async () => {
+    const db = new FakeD1([]) as unknown as D1Database;
+
+    await expect(
+      createTaskForMcp(db, { title: 'ゴミ出し', repeat_rule: 'daily' }),
+    ).rejects.toThrow(new McpToolError(REPEAT_DUE_DATE_ERROR));
+
+    await expect(
+      createTaskForMcp(db, {
+        title: 'ゴミ出し',
+        due_date: '2026-08-10',
+        repeat_rule: 'weekly:1,4',
+      }),
+    ).resolves.toMatchObject({ repeat_rule: 'weekly:1,4' });
   });
 
   it('keeps completed_at coupled to status for MCP updates', async () => {

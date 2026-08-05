@@ -2,6 +2,7 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { app } from '../app';
+import { REPEAT_DUE_DATE_ERROR, REPEAT_RULE_ERROR } from '../lib/repeat';
 
 function env(overrides: Record<string, unknown> = {}) {
   return {
@@ -107,6 +108,82 @@ describe('API safety boundaries', () => {
     expect(await response.json()).toEqual({
       error: 'due_date は YYYY-MM-DD 形式で指定してください',
     });
+  });
+
+  it('rejects a malformed repeat_rule before persistence', async () => {
+    const response = await app.request(
+      '/api/tasks',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'ゴミ出し',
+          due_date: '2026-08-10',
+          repeat_rule: 'weekly:9',
+        }),
+      },
+      env(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: REPEAT_RULE_ERROR });
+  });
+
+  // Without a due_date there is no anchor to advance from, so the task would
+  // complete once and never come back.
+  it('rejects a recurring task that has no due_date', async () => {
+    const response = await app.request(
+      '/api/tasks',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'ゴミ出し', repeat_rule: 'daily' }),
+      },
+      env(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: REPEAT_DUE_DATE_ERROR });
+  });
+
+  it('rejects clearing the due_date of an existing recurring task', async () => {
+    const stored = {
+      id: 1,
+      title: 'ゴミ出し',
+      note: '',
+      status: 'open' as const,
+      due_date: '2026-08-10',
+      due_time: null,
+      priority: 0,
+      tags: '',
+      repeat_rule: 'daily',
+      repeat_child_id: null,
+      created_at: '2026-08-01 00:00:00',
+      updated_at: '2026-08-01 00:00:00',
+      completed_at: null,
+    };
+    const response = await app.request(
+      '/api/tasks/1',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ due_date: null }),
+      },
+      env({
+        DB: {
+          prepare: () => ({
+            bind: () => ({
+              run: async () => ({ success: true, meta: { changes: 1 } }),
+              first: async () => stored,
+              all: async () => ({ results: [] }),
+            }),
+          }),
+        } as unknown as D1Database,
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: REPEAT_DUE_DATE_ERROR });
   });
 
   it('requires an allowlisted email when authentication is enabled', async () => {

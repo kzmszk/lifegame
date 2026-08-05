@@ -5,6 +5,12 @@ import type {
   TaskStatus,
   TaskUpdateInput,
 } from '../shared/types';
+import {
+  assertRepeatableDueDate,
+  nextRepeatDate,
+  RepeatRuleError,
+} from '../lib/repeat';
+import { tokyoToday } from '../lib/time';
 
 export type TaskView = 'today' | 'inbox' | 'all';
 
@@ -17,19 +23,23 @@ interface TaskRow {
   due_time: string | null;
   priority: number;
   tags: string;
+  repeat_rule: Task['repeat_rule'];
+  repeat_child_id: number | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
 }
 
 const TASK_COLUMNS = `id, title, note, status, due_date, due_time, priority, tags,
-  created_at, updated_at, completed_at`;
+  repeat_rule, repeat_child_id, created_at, updated_at, completed_at`;
 
 function toTask(row: TaskRow): Task {
   return {
     ...row,
     status: row.status === 'done' ? 'done' : 'open',
     priority: Number(row.priority) || 0,
+    repeat_child_id:
+      row.repeat_child_id === null ? null : Number(row.repeat_child_id),
   };
 }
 
@@ -84,8 +94,8 @@ export async function createTask(
   const result = await db
     .prepare(
       `INSERT INTO tasks
-      (title, note, status, due_date, due_time, priority, tags, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
+      (title, note, status, due_date, due_time, priority, tags, repeat_rule, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
     )
     .bind(
       input.title,
@@ -95,6 +105,7 @@ export async function createTask(
       input.due_time ?? null,
       input.priority ?? 0,
       input.tags ?? '',
+      input.repeat_rule ?? null,
       status,
     )
     .run();
@@ -109,6 +120,15 @@ export async function updateTask(
   id: number,
   input: TaskUpdateInput,
 ): Promise<Task | null> {
+  const current = await getTask(db, id);
+  if (!current) return null;
+
+  const finalRule =
+    input.repeat_rule !== undefined ? input.repeat_rule : current.repeat_rule;
+  const finalDueDate =
+    input.due_date !== undefined ? input.due_date : current.due_date;
+  assertRepeatableDueDate(finalRule, finalDueDate);
+
   const updates: string[] = [];
   const bindings: Array<string | number | null> = [];
 
@@ -136,6 +156,10 @@ export async function updateTask(
     updates.push('tags = ?');
     bindings.push(input.tags);
   }
+  if (input.repeat_rule !== undefined) {
+    updates.push('repeat_rule = ?');
+    bindings.push(input.repeat_rule);
+  }
   if (input.status !== undefined) {
     updates.push('status = ?');
     bindings.push(input.status);
@@ -146,7 +170,53 @@ export async function updateTask(
     bindings.push(input.status);
   }
 
-  if (updates.length === 0) return getTask(db, id);
+  if (updates.length === 0) return current;
+
+  const shouldGenerateChild =
+    current.status === 'open' &&
+    input.status === 'done' &&
+    finalRule !== null &&
+    finalRule !== undefined &&
+    current.repeat_child_id === null;
+
+  if (shouldGenerateChild) {
+    if (finalDueDate === null) throw new RepeatRuleError('due_date が必要です');
+    const nextDueDate = nextRepeatDate(finalRule, finalDueDate, tokyoToday());
+    const sourceUpdate = `${updates.join(', ')}, repeat_child_id = -1,
+      updated_at = datetime('now')`;
+    const statements = [
+      db
+        .prepare(
+          `UPDATE tasks SET ${sourceUpdate}
+          WHERE id = ? AND status = 'open' AND repeat_child_id IS NULL`,
+        )
+        .bind(...bindings, id),
+      db
+        .prepare(
+          `INSERT INTO tasks
+          (title, note, status, due_date, due_time, priority, tags, repeat_rule, repeat_child_id, completed_at)
+          SELECT title, note, 'open', ?, due_time, priority, tags, repeat_rule, NULL, NULL
+          FROM tasks
+          WHERE id = ? AND status = 'done' AND repeat_child_id = -1
+            AND repeat_rule IS NOT NULL AND due_date IS NOT NULL`,
+        )
+        .bind(nextDueDate, id),
+      db
+        .prepare(
+          `UPDATE tasks SET repeat_child_id = last_insert_rowid(), updated_at = datetime('now')
+          WHERE id = ? AND repeat_child_id = -1`,
+        )
+        .bind(id),
+    ];
+    const results = await db.batch(statements);
+    if (!results[0]?.success || results[0].meta.changes === 0) return null;
+    if (!results[1]?.success || results[1].meta.changes === 0)
+      throw new Error('繰り返しタスクの次回生成に失敗しました');
+    if (!results[2]?.success || results[2].meta.changes === 0)
+      throw new Error('繰り返しタスクの関連付けに失敗しました');
+    return getTask(db, id);
+  }
+
   updates.push("updated_at = datetime('now')");
   bindings.push(id);
 

@@ -10,6 +10,11 @@ import {
   type TaskView,
 } from '../db/tasks';
 import { parse } from '../lib/parse';
+import {
+  normalizeRepeatRule,
+  RepeatRuleError,
+  REPEAT_DUE_DATE_ERROR,
+} from '../lib/repeat';
 import { getAccessUser, isAccessAuthError } from '../lib/access';
 import { tokyoDayBounds, tokyoToday } from '../lib/time';
 import {
@@ -135,6 +140,9 @@ api.post('/tasks', async (c) => {
           ? draft.priority
           : (body.priority as number),
       tags: typeof body.tags === 'string' ? body.tags : draft.tags,
+      repeat_rule: hasOwn(body, 'repeat_rule')
+        ? (normalizeRepeatRule(body.repeat_rule) ?? null)
+        : draft.repeat_rule,
       status: parseStatus(body.status),
     };
   } else {
@@ -147,9 +155,12 @@ api.post('/tasks', async (c) => {
       due_time: (body.due_time as string | null | undefined) ?? null,
       priority: (body.priority as number | undefined) ?? 0,
       tags: (body.tags as string | undefined) ?? '',
+      repeat_rule: normalizeRepeatRule(body.repeat_rule) ?? null,
       status: parseStatus(body.status),
     };
   }
+  if (input.repeat_rule && input.due_date === null)
+    return error(c, REPEAT_DUE_DATE_ERROR, 400);
   const task = await createTask(
     c.env.DB,
     input as Required<Pick<TaskCreateInput, 'title'>> &
@@ -169,8 +180,13 @@ api.patch('/tasks/:id', async (c) => {
   if (!body) return error(c, 'JSON オブジェクトを指定してください', 400);
   const fieldError = validateFields(body);
   if (fieldError) return error(c, fieldError, 400);
-  const task = await updateTask(c.env.DB, id, fieldsFromBody(body));
-  return task ? c.json({ task }) : error(c, 'タスクが見つかりません', 404);
+  try {
+    const task = await updateTask(c.env.DB, id, fieldsFromBody(body));
+    return task ? c.json({ task }) : error(c, 'タスクが見つかりません', 404);
+  } catch (thrown) {
+    if (thrown instanceof RepeatRuleError) return error(c, thrown.message, 400);
+    throw thrown;
+  }
 });
 
 api.delete('/tasks/:id', async (c) => {

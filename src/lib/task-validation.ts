@@ -1,4 +1,5 @@
 import type { TaskStatus, TaskUpdateInput } from '../shared/types';
+import { normalizeRepeatRule, validateRepeatRule } from './repeat';
 
 export function hasOwn(body: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(body, key);
@@ -94,6 +95,10 @@ export function validateFields(body: Record<string, unknown>): string | null {
     return 'priority は 0 または 1 で指定してください';
   if (hasOwn(body, 'status') && !parseStatus(body.status))
     return 'status は open または done で指定してください';
+  if (hasOwn(body, 'repeat_rule')) {
+    const repeatError = validateRepeatRule(body.repeat_rule);
+    if (repeatError) return repeatError;
+  }
   return null;
 }
 
@@ -107,6 +112,8 @@ export function fieldsFromBody(body: Record<string, unknown>): TaskUpdateInput {
     fields.due_time = body.due_time as string | null;
   if (hasOwn(body, 'priority')) fields.priority = body.priority as number;
   if (hasOwn(body, 'tags')) fields.tags = body.tags as string;
+  if (hasOwn(body, 'repeat_rule'))
+    fields.repeat_rule = normalizeRepeatRule(body.repeat_rule) ?? null;
   if (hasOwn(body, 'status')) fields.status = body.status as TaskStatus;
   return fields;
 }

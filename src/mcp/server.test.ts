@@ -89,6 +89,8 @@ describe('MCP tool registration', () => {
       due_time: '09:30',
       priority: 0,
       tags: '秘密',
+      repeat_rule: null,
+      repeat_child_id: null,
       created_at: '2026-08-01 00:00:00',
       updated_at: '2026-08-01 00:00:00',
       completed_at: null,

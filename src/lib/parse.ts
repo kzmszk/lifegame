@@ -192,5 +192,6 @@ export function parse(text: string, now: Date = new Date()): TaskDraft {
     due_time: parsedTime.time,
     priority: 0,
     tags: '',
+    repeat_rule: null,
   };
 }
