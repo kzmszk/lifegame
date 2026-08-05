@@ -2,7 +2,11 @@ import type { D1Database } from '@cloudflare/workers-types';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { app } from '../app';
-import { REPEAT_DUE_DATE_ERROR, REPEAT_RULE_ERROR } from '../lib/repeat';
+import {
+  REPEAT_DONE_ON_CREATE_ERROR,
+  REPEAT_DUE_DATE_ERROR,
+  REPEAT_RULE_ERROR,
+} from '../lib/repeat';
 
 function env(overrides: Record<string, unknown> = {}) {
   return {
@@ -144,6 +148,30 @@ describe('API safety boundaries', () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: REPEAT_DUE_DATE_ERROR });
+  });
+
+  // The child is spawned by the open→done transition, which a task created
+  // already done never makes — the series would be born with no successor.
+  it('rejects creating a recurring task that is already done', async () => {
+    const response = await app.request(
+      '/api/tasks',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'ゴミ出し',
+          due_date: '2026-08-10',
+          repeat_rule: 'daily',
+          status: 'done',
+        }),
+      },
+      env(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: REPEAT_DONE_ON_CREATE_ERROR,
+    });
   });
 
   it('rejects clearing the due_date of an existing recurring task', async () => {

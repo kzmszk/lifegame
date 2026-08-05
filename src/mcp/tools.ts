@@ -12,6 +12,7 @@ import { fieldsFromBody, validateFields } from '../lib/task-validation';
 import {
   normalizeRepeatRule,
   RepeatRuleError,
+  REPEAT_DONE_ON_CREATE_ERROR,
   REPEAT_DUE_DATE_ERROR,
 } from '../lib/repeat';
 import { listCalendarEvents, listHolidays } from '../lib/google-calendar';
@@ -185,6 +186,8 @@ export async function createTaskForMcp(
   };
   if (createInput.repeat_rule && createInput.due_date === null)
     throw new McpToolError(REPEAT_DUE_DATE_ERROR);
+  if (createInput.repeat_rule && body.status === 'done')
+    throw new McpToolError(REPEAT_DONE_ON_CREATE_ERROR);
   return createTask(db, createInput);
 }
 

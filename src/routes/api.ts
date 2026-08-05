@@ -14,6 +14,7 @@ import { parse } from '../lib/parse';
 import {
   normalizeRepeatRule,
   RepeatRuleError,
+  REPEAT_DONE_ON_CREATE_ERROR,
   REPEAT_DUE_DATE_ERROR,
 } from '../lib/repeat';
 import { getAccessUser, isAccessAuthError } from '../lib/access';
@@ -162,6 +163,8 @@ api.post('/tasks', async (c) => {
   }
   if (input.repeat_rule && input.due_date === null)
     return error(c, REPEAT_DUE_DATE_ERROR, 400);
+  if (input.repeat_rule && input.status === 'done')
+    return error(c, REPEAT_DONE_ON_CREATE_ERROR, 400);
   const task = await createTask(
     c.env.DB,
     input as Required<Pick<TaskCreateInput, 'title'>> &

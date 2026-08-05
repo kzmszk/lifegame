@@ -7,6 +7,13 @@ export type RepeatRule =
 export const REPEAT_RULE_ERROR =
   'repeat_rule は daily、weekly:曜日、monthly:日、every:日数(1〜366)の形式で指定してください';
 export const REPEAT_DUE_DATE_ERROR = '繰り返しタスクには due_date が必要です';
+/**
+ * The next occurrence is spawned by the open→done transition in `updateTask`.
+ * A task created already done never makes that transition, so the series would
+ * be born dead — no child, and nothing left to complete that would make one.
+ */
+export const REPEAT_DONE_ON_CREATE_ERROR =
+  '繰り返しタスクは完了状態では作成できません';
 
 const MAX_REPEAT_YEAR = 9999;
 const MAX_ADVANCE_ITERATIONS = 10_000;
