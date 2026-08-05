@@ -234,7 +234,14 @@ export async function updateTask(
     if (!results[0]?.success) return null;
     if (results[0].meta.changes === 0) {
       const latest = await getTask(db, id);
-      if (!latest || latest.status === 'done') return latest;
+      if (!latest) return latest;
+      // A double-tapped complete toggle is the same request twice, so reporting
+      // the already-done task is honest. A request that also carried edits is
+      // not: those fields were never written, and returning success would drop
+      // them silently.
+      const completionOnly =
+        Object.keys(input).length === 1 && input.status === 'done';
+      if (latest.status === 'done' && completionOnly) return latest;
       throw new TaskConflictError();
     }
     if (!results[1]?.success || results[1].meta.changes === 0)

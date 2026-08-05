@@ -262,6 +262,71 @@ describe('API safety boundaries', () => {
     });
   });
 
+  // The SPA completes optimistically, so a double-tapped toggle sends the same
+  // request twice. The loser must not be told the task vanished.
+  it('treats a duplicate completion as idempotent but a raced edit as conflict', async () => {
+    const completed = {
+      id: 1,
+      title: 'ゴミ出し',
+      note: '',
+      status: 'done' as const,
+      due_date: '2026-08-01',
+      due_time: null,
+      priority: 0,
+      tags: '',
+      repeat_rule: 'daily',
+      repeat_child_id: 2,
+      created_at: '2026-08-01 00:00:00',
+      updated_at: '2026-08-01 00:00:00',
+      completed_at: '2026-08-01 01:00:00',
+    };
+    const open = {
+      ...completed,
+      status: 'open' as const,
+      repeat_child_id: null,
+      completed_at: null,
+    };
+    // The pre-batch read still sees it open; by the refetch the winner has
+    // completed it. That ordering is what makes this a race and not a no-op.
+    const racedEnv = () => {
+      let reads = 0;
+      return env({
+        DB: {
+          prepare: () => ({
+            bind: () => ({
+              first: async () => (reads++ === 0 ? open : completed),
+              run: async () => ({ success: true, meta: { changes: 1 } }),
+            }),
+          }),
+          batch: async () =>
+            [0, 0, 0].map(() => ({
+              success: true,
+              results: [],
+              meta: { changes: 0 },
+            })),
+        } as unknown as D1Database,
+      });
+    };
+    const patch = (body: Record<string, unknown>) =>
+      app.request(
+        '/api/tasks/1',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        racedEnv(),
+      );
+
+    const duplicate = await patch({ status: 'done' });
+    expect(duplicate.status).toBe(200);
+    expect(await duplicate.json()).toEqual({ task: completed });
+
+    // The title was never written, so success here would drop the edit.
+    const withEdit = await patch({ status: 'done', title: '新しい名前' });
+    expect(withEdit.status).toBe(409);
+  });
+
   it('requires an allowlisted email when authentication is enabled', async () => {
     const response = await app.request(
       '/api/tasks',
