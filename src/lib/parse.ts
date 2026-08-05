@@ -49,6 +49,31 @@ function addDays(parts: TokyoDateParts, amount: number): string {
   );
 }
 
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/**
+ * Return this month's requested day, rounded to its last day when necessary,
+ * or the next month's occurrence if this month's has passed already.
+ */
+function monthlyDate(parts: TokyoDateParts, requestedDay: number): string {
+  let year = parts.year;
+  let month = parts.month;
+  let day = Math.min(requestedDay, daysInMonth(year, month));
+
+  if (day < parts.day) {
+    month += 1;
+    if (month === 13) {
+      year += 1;
+      month = 1;
+    }
+    day = Math.min(requestedDay, daysInMonth(year, month));
+  }
+
+  return formatDate(year, month, day);
+}
+
 function dateFromMonthDay(
   parts: TokyoDateParts,
   month: number,
@@ -122,60 +147,102 @@ export function parse(text: string, now: Date = new Date()): TaskDraft {
   let remaining = original;
   const today = tokyoDateParts(now);
   let dueDate: string | null = null;
+  let repeatRule: TaskDraft['repeat_rule'] = null;
 
-  const nextWeekdayMatch = remaining.match(
-    /来週(?:の)?([月火水木金土日])(?:曜日|曜)/,
+  // Recurrence phrases must win over the ordinary weekday parser below. Without
+  // this pass, "毎週月曜 ゴミ出し" becomes a one-off Monday task whose title
+  // still starts with "毎週".
+  const weeklyRepeatMatch = remaining.match(
+    /毎週\s*(?:の\s*)?([月火水木金土日])(?:曜日|曜)/,
   );
-  if (nextWeekdayMatch) {
-    dueDate = weekdayDate(
-      today,
-      WEEKDAYS.indexOf(nextWeekdayMatch[1] as (typeof WEEKDAYS)[number]),
-      true,
+  const monthlyRepeatMatch = remaining.match(/毎月\s*(\d{1,2})日/);
+  const everyRepeatMatch = remaining.match(/(\d{1,3})日ごと/);
+  if (remaining.includes('毎日')) {
+    repeatRule = 'daily';
+    dueDate = formatDate(today.year, today.month, today.day);
+    remaining = remaining.replace('毎日', '');
+  } else if (weeklyRepeatMatch) {
+    const weekday = WEEKDAYS.indexOf(
+      weeklyRepeatMatch[1] as (typeof WEEKDAYS)[number],
     );
-    remaining = remaining.replace(nextWeekdayMatch[0], '');
-  } else {
-    // Do not treat the date words inside names such as "明日香" as date phrases.
-    const relativeMatch = remaining.match(
-      /(明後日|明日|今日)(?![\p{Script=Han}])/u,
+    repeatRule = `weekly:${weekday}`;
+    dueDate = weekdayDate(today, weekday, false);
+    remaining = remaining.replace(weeklyRepeatMatch[0], '');
+  } else if (monthlyRepeatMatch) {
+    const day = Number(monthlyRepeatMatch[1]);
+    if (day >= 1 && day <= 31) {
+      repeatRule = `monthly:${day}`;
+      dueDate = monthlyDate(today, day);
+      remaining = remaining.replace(monthlyRepeatMatch[0], '');
+    }
+  } else if (everyRepeatMatch) {
+    const days = Number(everyRepeatMatch[1]);
+    if (days >= 1 && days <= 366) {
+      repeatRule = `every:${days}`;
+      dueDate = formatDate(today.year, today.month, today.day);
+      remaining = remaining.replace(everyRepeatMatch[0], '');
+    }
+  }
+
+  if (!repeatRule) {
+    const nextWeekdayMatch = remaining.match(
+      /来週(?:の)?([月火水木金土日])(?:曜日|曜)/,
     );
-    if (relativeMatch) {
-      const offset =
-        relativeMatch[0] === '明後日' ? 2 : relativeMatch[0] === '明日' ? 1 : 0;
-      dueDate = addDays(today, offset);
-      remaining = remaining.replace(
-        new RegExp(`${relativeMatch[0]}(?:の)?`),
-        '',
+    if (nextWeekdayMatch) {
+      dueDate = weekdayDate(
+        today,
+        WEEKDAYS.indexOf(nextWeekdayMatch[1] as (typeof WEEKDAYS)[number]),
+        true,
       );
+      remaining = remaining.replace(nextWeekdayMatch[0], '');
     } else {
-      // Require the 日 suffix so quantity text such as "8月10件" is not read as a date.
-      const monthDayMatch = remaining.match(/(\d{1,2})月\s*(\d{1,2})日/);
-      if (monthDayMatch) {
-        const parsedDate = dateFromMonthDay(
-          today,
-          Number(monthDayMatch[1]),
-          Number(monthDayMatch[2]),
+      // Do not treat the date words inside names such as "明日香" as date phrases.
+      const relativeMatch = remaining.match(
+        /(明後日|明日|今日)(?![\p{Script=Han}])/u,
+      );
+      if (relativeMatch) {
+        const offset =
+          relativeMatch[0] === '明後日'
+            ? 2
+            : relativeMatch[0] === '明日'
+              ? 1
+              : 0;
+        dueDate = addDays(today, offset);
+        remaining = remaining.replace(
+          new RegExp(`${relativeMatch[0]}(?:の)?`),
+          '',
         );
-        if (parsedDate) {
-          dueDate = parsedDate;
-          remaining = remaining.replace(monthDayMatch[0], '');
-        }
-      }
-
-      if (!dueDate) {
-        const weekdayMatch = remaining.match(/([月火水木金土日])(?:曜日|曜)/);
-        if (weekdayMatch) {
-          dueDate = weekdayDate(
+      } else {
+        // Require the 日 suffix so quantity text such as "8月10件" is not read as a date.
+        const monthDayMatch = remaining.match(/(\d{1,2})月\s*(\d{1,2})日/);
+        if (monthDayMatch) {
+          const parsedDate = dateFromMonthDay(
             today,
-            WEEKDAYS.indexOf(weekdayMatch[1] as (typeof WEEKDAYS)[number]),
-            false,
+            Number(monthDayMatch[1]),
+            Number(monthDayMatch[2]),
           );
-          remaining = remaining.replace(weekdayMatch[0], '');
+          if (parsedDate) {
+            dueDate = parsedDate;
+            remaining = remaining.replace(monthDayMatch[0], '');
+          }
         }
-      }
 
-      if (!dueDate && remaining.includes('来週')) {
-        dueDate = addDays(today, 7);
-        remaining = remaining.replace(/来週(?:の)?/, '');
+        if (!dueDate) {
+          const weekdayMatch = remaining.match(/([月火水木金土日])(?:曜日|曜)/);
+          if (weekdayMatch) {
+            dueDate = weekdayDate(
+              today,
+              WEEKDAYS.indexOf(weekdayMatch[1] as (typeof WEEKDAYS)[number]),
+              false,
+            );
+            remaining = remaining.replace(weekdayMatch[0], '');
+          }
+        }
+
+        if (!dueDate && remaining.includes('来週')) {
+          dueDate = addDays(today, 7);
+          remaining = remaining.replace(/来週(?:の)?/, '');
+        }
       }
     }
   }
@@ -192,6 +259,6 @@ export function parse(text: string, now: Date = new Date()): TaskDraft {
     due_time: parsedTime.time,
     priority: 0,
     tags: '',
-    repeat_rule: null,
+    repeat_rule: repeatRule,
   };
 }

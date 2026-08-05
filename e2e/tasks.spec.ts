@@ -81,3 +81,77 @@ test('completing a task takes it out of Inbox', async ({ page, request }) => {
   const reread = await request.get(`/api/tasks/${task.id}`);
   expect(((await reread.json()) as { task: Task }).task.status).toBe('done');
 });
+
+test('task details require a due date before enabling recurrence', async ({
+  page,
+  request,
+}) => {
+  const title = uniqueTitle('repeat needs due date');
+  const task = await createTask(request, title);
+
+  await page.goto(`/tasks/${task.id}?from=inbox`);
+  await page.getByLabel('繰り返しの頻度').selectOption('daily');
+
+  await expect(
+    page.getByText('繰り返しタスクには期限が必要です。'),
+  ).toBeVisible();
+  const save = page.getByRole('button', { name: '変更を保存' });
+  await expect(save).toBeDisabled();
+
+  await page.getByLabel('期限').fill('2026-08-05');
+  await expect(save).toBeEnabled();
+  await save.click();
+
+  const reread = await request.get(`/api/tasks/${task.id}`);
+  const saved = ((await reread.json()) as { task: Task }).task;
+  expect(saved.repeat_rule).toBe('daily');
+  expect(saved.due_date).toBe('2026-08-05');
+});
+
+test('a recurring task created in the UI generates and persists its next occurrence', async ({
+  page,
+  request,
+}) => {
+  const title = uniqueTitle('daily repeat');
+  await page.goto('/');
+
+  await page
+    .getByRole('textbox', { name: 'タスクを追加' })
+    .fill(`毎日 ${title}`);
+  await page.getByRole('button', { name: 'このタスクを追加' }).click();
+
+  const dialog = page.getByRole('dialog', { name: '内容を確認' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('繰り返しの頻度')).toHaveValue('daily');
+  await dialog.getByRole('button', { name: 'この内容で追加' }).click();
+
+  const currentCard = page.locator('.task-card', { hasText: title });
+  await expect(currentCard).toBeVisible();
+  await expect(currentCard.getByLabel('繰り返しタスク')).toBeVisible();
+  await currentCard.getByRole('button', { name: '完了にする' }).click();
+
+  // Reload before checking the list so the generated task must come from D1,
+  // not from React state left behind by the completion request.
+  await page.reload();
+  await page.goto('/all');
+
+  const recurringCards = page.locator('.task-card', { hasText: title });
+  await expect(recurringCards).toHaveCount(2);
+  const nextCard = recurringCards.filter({
+    has: page.getByRole('button', { name: '完了にする' }),
+  });
+  await expect(nextCard).toHaveCount(1);
+  await expect(nextCard.getByLabel('繰り返しタスク')).toBeVisible();
+
+  const response = await request.get('/api/tasks?view=all');
+  expect(response.ok()).toBeTruthy();
+  const { tasks } = (await response.json()) as { tasks: Task[] };
+  const occurrences = tasks.filter((task) => task.title === title);
+  expect(occurrences).toHaveLength(2);
+  const completed = occurrences.find((task) => task.status === 'done');
+  const next = occurrences.find((task) => task.status === 'open');
+  expect(completed?.repeat_rule).toBeNull();
+  expect(next?.repeat_rule).toBe('daily');
+  expect(completed?.repeat_child_id).toBe(next?.id);
+  expect(next?.due_date).not.toBe(completed?.due_date);
+});
