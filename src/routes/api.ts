@@ -14,6 +14,7 @@ import { parse } from '../lib/parse';
 import {
   normalizeRepeatRule,
   RepeatRuleError,
+  validateScheduleState,
   validateRepeatState,
 } from '../lib/repeat';
 import { getAccessUser, isAccessAuthError } from '../lib/access';
@@ -141,6 +142,18 @@ api.post('/tasks', async (c) => {
           ? draft.priority
           : (body.priority as number),
       tags: typeof body.tags === 'string' ? body.tags : draft.tags,
+      due_date: hasOwn(body, 'due_date')
+        ? (body.due_date as string | null)
+        : draft.due_date,
+      due_time: hasOwn(body, 'due_time')
+        ? (body.due_time as string | null)
+        : draft.due_time,
+      scheduled_date: hasOwn(body, 'scheduled_date')
+        ? (body.scheduled_date as string | null)
+        : draft.scheduled_date,
+      scheduled_time: hasOwn(body, 'scheduled_time')
+        ? (body.scheduled_time as string | null)
+        : draft.scheduled_time,
       repeat_rule: hasOwn(body, 'repeat_rule')
         ? (normalizeRepeatRule(body.repeat_rule) ?? null)
         : draft.repeat_rule,
@@ -154,16 +167,27 @@ api.post('/tasks', async (c) => {
       note: (body.note as string | undefined) ?? '',
       due_date: (body.due_date as string | null | undefined) ?? null,
       due_time: (body.due_time as string | null | undefined) ?? null,
+      scheduled_date:
+        (body.scheduled_date as string | null | undefined) ?? null,
+      scheduled_time:
+        (body.scheduled_time as string | null | undefined) ?? null,
       priority: (body.priority as number | undefined) ?? 0,
       tags: (body.tags as string | undefined) ?? '',
       repeat_rule: normalizeRepeatRule(body.repeat_rule) ?? null,
       status: parseStatus(body.status),
     };
   }
+  const scheduleError = validateScheduleState(
+    input.scheduled_date ?? null,
+    input.scheduled_time ?? null,
+  );
+  if (scheduleError) return error(c, scheduleError, 400);
   const repeatError = validateRepeatState(
     input.repeat_rule ?? null,
     input.status ?? 'open',
+    input.scheduled_date ?? null,
     input.due_date ?? null,
+    input.due_time ?? null,
   );
   if (repeatError) return error(c, repeatError, 400);
   try {
@@ -174,6 +198,7 @@ api.post('/tasks', async (c) => {
     );
     return c.json({ task }, 201);
   } catch (thrown) {
+    if (thrown instanceof RepeatRuleError) return error(c, thrown.message, 400);
     if (thrown instanceof TaskConflictError)
       return error(c, thrown.message, 409);
     throw thrown;

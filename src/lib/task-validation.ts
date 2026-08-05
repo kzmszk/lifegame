@@ -78,6 +78,20 @@ export function validateFields(body: Record<string, unknown>): string | null {
     return 'due_time は HH:MM 形式で指定してください';
   }
   if (
+    hasOwn(body, 'scheduled_date') &&
+    body.scheduled_date !== null &&
+    typeof body.scheduled_date !== 'string'
+  ) {
+    return 'scheduled_date は YYYY-MM-DD 形式で指定してください';
+  }
+  if (
+    hasOwn(body, 'scheduled_time') &&
+    body.scheduled_time !== null &&
+    typeof body.scheduled_time !== 'string'
+  ) {
+    return 'scheduled_time は HH:MM 形式で指定してください';
+  }
+  if (
     hasOwn(body, 'title') &&
     (typeof body.title !== 'string' || body.title.trim() === '')
   ) {
@@ -91,6 +105,17 @@ export function validateFields(body: Record<string, unknown>): string | null {
     return 'due_date は YYYY-MM-DD 形式で指定してください';
   if (!validTime(nullableText(body, 'due_time')))
     return 'due_time は HH:MM 形式で指定してください';
+  if (!validDate(nullableText(body, 'scheduled_date')))
+    return 'scheduled_date は YYYY-MM-DD 形式で指定してください';
+  if (!validTime(nullableText(body, 'scheduled_time')))
+    return 'scheduled_time は HH:MM 形式で指定してください';
+  if (
+    hasOwn(body, 'scheduled_time') &&
+    body.scheduled_time !== null &&
+    hasOwn(body, 'scheduled_date') &&
+    body.scheduled_date === null
+  )
+    return 'scheduled_time を指定するには scheduled_date が必要です';
   if (!validPriority(body.priority))
     return 'priority は 0 または 1 で指定してください';
   if (hasOwn(body, 'status') && !parseStatus(body.status))
@@ -110,6 +135,10 @@ export function fieldsFromBody(body: Record<string, unknown>): TaskUpdateInput {
     fields.due_date = body.due_date as string | null;
   if (hasOwn(body, 'due_time'))
     fields.due_time = body.due_time as string | null;
+  if (hasOwn(body, 'scheduled_date'))
+    fields.scheduled_date = body.scheduled_date as string | null;
+  if (hasOwn(body, 'scheduled_time'))
+    fields.scheduled_time = body.scheduled_time as string | null;
   if (hasOwn(body, 'priority')) fields.priority = body.priority as number;
   if (hasOwn(body, 'tags')) fields.tags = body.tags as string;
   if (hasOwn(body, 'repeat_rule'))

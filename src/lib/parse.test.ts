@@ -56,10 +56,11 @@ describe('parse', () => {
     });
   });
 
-  it('parses daily recurrence with today as the first due date', () => {
+  it('parses daily recurrence with today as the first scheduled date', () => {
     expect(parse('毎日 薬を飲む', now)).toMatchObject({
       title: '薬を飲む',
-      due_date: '2026-08-02',
+      due_date: null,
+      scheduled_date: '2026-08-02',
       repeat_rule: 'daily',
     });
   });
@@ -67,12 +68,14 @@ describe('parse', () => {
   it('parses weekly recurrence before ordinary weekday parsing', () => {
     expect(parse('毎週月曜 ゴミ出し', now)).toMatchObject({
       title: 'ゴミ出し',
-      due_date: '2026-08-03',
+      due_date: null,
+      scheduled_date: '2026-08-03',
       repeat_rule: 'weekly:1',
     });
     expect(parse('毎週 月曜 ゴミ出し', now)).toMatchObject({
       title: 'ゴミ出し',
-      due_date: '2026-08-03',
+      due_date: null,
+      scheduled_date: '2026-08-03',
       repeat_rule: 'weekly:1',
     });
   });
@@ -80,13 +83,15 @@ describe('parse', () => {
   it('parses monthly recurrence and chooses its next occurrence', () => {
     expect(parse('毎月15日 家計を確認', now)).toMatchObject({
       title: '家計を確認',
-      due_date: '2026-08-15',
+      due_date: null,
+      scheduled_date: '2026-08-15',
       repeat_rule: 'monthly:15',
     });
     expect(
       parse('毎月15日 家計を確認', new Date('2026-08-20T10:00:00+09:00')),
     ).toMatchObject({
-      due_date: '2026-09-15',
+      due_date: null,
+      scheduled_date: '2026-09-15',
       repeat_rule: 'monthly:15',
     });
   });
@@ -94,7 +99,8 @@ describe('parse', () => {
   it('parses an every-N-days recurrence', () => {
     expect(parse('3日ごとに観葉植物に水やり', now)).toMatchObject({
       title: '観葉植物に水やり',
-      due_date: '2026-08-02',
+      due_date: null,
+      scheduled_date: '2026-08-02',
       repeat_rule: 'every:3',
     });
   });

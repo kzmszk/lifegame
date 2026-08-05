@@ -14,7 +14,10 @@ import {
   updateTaskForMcp,
 } from './tools';
 import { assertMcpScope } from './auth';
-import { REPEAT_DUE_DATE_ERROR } from '../lib/repeat';
+import {
+  REPEAT_DEADLINE_ERROR,
+  REPEAT_SCHEDULED_DATE_ERROR,
+} from '../lib/repeat';
 import type { Env } from '../env';
 
 interface Row {
@@ -24,6 +27,8 @@ interface Row {
   status: 'open' | 'done';
   due_date: string | null;
   due_time: string | null;
+  scheduled_date: string | null;
+  scheduled_time: string | null;
   priority: number;
   tags: string;
   repeat_rule: string | null;
@@ -46,6 +51,8 @@ const row = (overrides: Partial<Row>): Row => ({
   status: 'open',
   due_date: null,
   due_time: null,
+  scheduled_date: null,
+  scheduled_time: null,
   priority: 0,
   tags: '',
   repeat_rule: null,
@@ -71,16 +78,22 @@ class FakeStatement {
 
   async all<T>(): Promise<FakeResult<T>> {
     let results: Row[];
-    if (this.sql.includes("status = 'open' AND due_date IS NULL")) {
-      results = this.database.rows.filter(
-        (task) => task.status === 'open' && task.due_date === null,
-      );
-    } else if (
+    if (
       this.sql.includes(
-        "(status = 'open' AND due_date IS NOT NULL AND due_date <= ?)",
+        "status = 'open' AND due_date IS NULL AND scheduled_date IS NULL",
       )
     ) {
-      const [today, startUtc, nextStartUtc] = this.bindings as [
+      results = this.database.rows.filter(
+        (task) =>
+          task.status === 'open' &&
+          task.due_date === null &&
+          task.scheduled_date === null,
+      );
+    } else if (
+      this.sql.includes('scheduled_date IS NOT NULL AND scheduled_date <= ?')
+    ) {
+      const [today, scheduledToday, startUtc, nextStartUtc] = this.bindings as [
+        string,
         string,
         string,
         string,
@@ -88,8 +101,9 @@ class FakeStatement {
       results = this.database.rows.filter(
         (task) =>
           (task.status === 'open' &&
-            task.due_date !== null &&
-            task.due_date <= today) ||
+            ((task.due_date !== null && task.due_date <= today) ||
+              (task.scheduled_date !== null &&
+                task.scheduled_date <= scheduledToday))) ||
           (task.status === 'done' &&
             task.completed_at !== null &&
             task.completed_at >= startUtc &&
@@ -115,6 +129,8 @@ class FakeStatement {
         status,
         dueDate,
         dueTime,
+        scheduledDate,
+        scheduledTime,
         priority,
         tags,
         repeatRule,
@@ -129,6 +145,8 @@ class FakeStatement {
           status: String(status) as Row['status'],
           due_date: dueDate as string | null,
           due_time: dueTime as string | null,
+          scheduled_date: scheduledDate as string | null,
+          scheduled_time: scheduledTime as string | null,
           priority: Number(priority),
           tags: String(tags),
           repeat_rule: repeatRule as string | null,
@@ -151,7 +169,11 @@ class FakeStatement {
       if (!task) return this.result({ changes: 0 });
 
       let guardIndex = setBindingCount + 1;
-      for (const column of ['due_date', 'status', 'repeat_rule'] as const) {
+      for (const column of [
+        'scheduled_date',
+        'status',
+        'repeat_rule',
+      ] as const) {
         if (!this.sql.includes(`${column} IS ?`)) continue;
         if (task[column] !== this.bindings[guardIndex++])
           return this.result({ changes: 0 });
@@ -225,6 +247,8 @@ describe('MCP tool handlers', () => {
     const db = new FakeD1([
       row({ id: 1, title: '期限切れ', due_date: '2026-08-02' }),
       row({ id: 2, title: '今日', due_date: '2026-08-03' }),
+      row({ id: 6, title: '予定期限切れ', scheduled_date: '2026-08-02' }),
+      row({ id: 7, title: '予定今日', scheduled_date: '2026-08-03' }),
       row({ id: 3, title: 'Inbox' }),
       row({
         id: 4,
@@ -249,11 +273,19 @@ describe('MCP tool handlers', () => {
     expect(summary.open_tasks.map((task) => task.title)).toEqual([
       '期限切れ',
       '今日',
+      '予定期限切れ',
+      '予定今日',
     ]);
     expect(summary.overdue_tasks.map((task) => task.title)).toEqual([
       '期限切れ',
     ]);
     expect(summary.due_today_tasks.map((task) => task.title)).toEqual(['今日']);
+    expect(summary.scheduled_overdue_tasks.map((task) => task.title)).toEqual([
+      '予定期限切れ',
+    ]);
+    expect(summary.scheduled_today_tasks.map((task) => task.title)).toEqual([
+      '予定今日',
+    ]);
     expect(summary.inbox_count).toBe(1);
     expect(summary.completed_today_tasks.map((task) => task.title)).toEqual([
       '今日完了',
@@ -332,12 +364,16 @@ describe('MCP tool handlers', () => {
         title: '作成',
         due_date: '2026-08-03',
         due_time: '09:30',
+        scheduled_date: '2026-08-04',
+        scheduled_time: '10:00',
         priority: 1,
       }),
     ).resolves.toMatchObject({
       title: '作成',
       due_date: '2026-08-03',
       due_time: '09:30',
+      scheduled_date: '2026-08-04',
+      scheduled_time: '10:00',
       priority: 1,
     });
   });
@@ -347,6 +383,12 @@ describe('MCP tool handlers', () => {
     const invalidCases: Array<[Record<string, unknown>, string]> = [
       [{ title: 'x', due_date: '2026-02-31' }, 'due_date'],
       [{ title: 'x', due_time: '25:00' }, 'due_time'],
+      [{ title: 'x', scheduled_date: '2026-02-31' }, 'scheduled_date'],
+      [{ title: 'x', scheduled_time: '25:00' }, 'scheduled_time'],
+      [
+        { title: 'x', scheduled_date: null, scheduled_time: '10:00' },
+        'scheduled_date',
+      ],
       [{ title: ' ' }, 'title'],
       [{ title: 'x', note: 1 }, 'note'],
       [{ title: 'x', tags: 1 }, 'tags'],
@@ -361,19 +403,28 @@ describe('MCP tool handlers', () => {
     }
   });
 
-  // The rule needs an anchor to advance from; without one the task would
+  // The rule needs an execution schedule to advance from; without one the task would
   // complete once and never come back.
-  it('refuses a recurring task with no due_date', async () => {
+  it('refuses a recurring task with no scheduled_date or with deadline fields', async () => {
     const db = new FakeD1([]) as unknown as D1Database;
 
     await expect(
       createTaskForMcp(db, { title: 'ゴミ出し', repeat_rule: 'daily' }),
-    ).rejects.toThrow(new McpToolError(REPEAT_DUE_DATE_ERROR));
+    ).rejects.toThrow(new McpToolError(REPEAT_SCHEDULED_DATE_ERROR));
 
     await expect(
       createTaskForMcp(db, {
         title: 'ゴミ出し',
         due_date: '2026-08-10',
+        scheduled_date: '2026-08-10',
+        repeat_rule: 'daily',
+      }),
+    ).rejects.toThrow(new McpToolError(REPEAT_DEADLINE_ERROR));
+
+    await expect(
+      createTaskForMcp(db, {
+        title: 'ゴミ出し',
+        scheduled_date: '2026-08-10',
         repeat_rule: 'weekly:1,4',
       }),
     ).resolves.toMatchObject({ repeat_rule: 'weekly:1,4' });
@@ -396,7 +447,7 @@ describe('MCP tool handlers', () => {
     const db = new FakeD1([
       row({
         id: 1,
-        due_date: '2026-08-01',
+        scheduled_date: '2026-08-01',
         repeat_rule: 'daily',
       }),
     ]) as unknown as D1Database;

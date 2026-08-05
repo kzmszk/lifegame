@@ -32,6 +32,12 @@ const createTaskSchema = {
   due_time: timeSchema.describe(
     '期限時刻。HH:MM。指定しない場合はnullまたは省略',
   ),
+  scheduled_date: dateSchema.describe(
+    '実行予定日。YYYY-MM-DD。繰り返しタスクでは必須で、期限とは併用できません',
+  ),
+  scheduled_time: timeSchema.describe(
+    '実行予定時刻。HH:MM。scheduled_date と組み合わせて指定します',
+  ),
   priority: prioritySchema.describe('優先度。0は通常、1は高'),
   tags: z.string().optional().describe('カンマ区切りのタグ'),
   note: z.string().optional().describe('補足メモ'),
@@ -49,6 +55,8 @@ const updateTaskSchema = {
   title: z.string().min(1).optional().describe('新しいタスク名'),
   due_date: dateSchema.describe('新しい期限。nullで期限なし'),
   due_time: timeSchema.describe('新しい期限時刻。nullで時刻なし'),
+  scheduled_date: dateSchema.describe('新しい実行予定日。nullで予定なし'),
+  scheduled_time: timeSchema.describe('新しい実行予定時刻。nullで時刻なし'),
   priority: prioritySchema.describe('優先度。0は通常、1は高'),
   tags: z.string().optional().describe('新しいカンマ区切りタグ'),
   note: z.string().optional().describe('新しい補足メモ'),
@@ -103,7 +111,7 @@ export function registerLifegameTools(
     'get_daily_summary',
     {
       description:
-        'JSTの今日について、期限が今日以前の未完了タスク、期限切れ、今日の期限、Inbox件数、今日完了したタスクを朝のブリーフィング向けにまとめて返します。calendar:readスコープがある場合はGoogleカレンダーの予定と祝日も含みます。calendar_unavailableがtrueのときは予定を取得できなかったという意味で、予定なしとは異なります。eventsキー自体が無い場合はcalendar:readが許可されていないという意味です。',
+        'JSTの今日について、期限が今日以前または実行予定日が今日以前の未完了タスク、期限と実行予定を分けた期限切れ/今日分、Inbox件数、今日完了したタスクを朝のブリーフィング向けにまとめて返します。calendar:readスコープがある場合はGoogleカレンダーの予定と祝日も含みます。calendar_unavailableがtrueのときは予定を取得できなかったという意味で、予定なしとは異なります。eventsキー自体が無い場合はcalendar:readが許可されていないという意味です。',
       annotations: { readOnlyHint: true, destructiveHint: false },
     },
     async () => {

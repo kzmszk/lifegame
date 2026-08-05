@@ -6,7 +6,12 @@ export type RepeatRule =
 
 export const REPEAT_RULE_ERROR =
   'repeat_rule は daily、weekly:曜日、monthly:日、every:日数(1〜366)の形式で指定してください';
-export const REPEAT_DUE_DATE_ERROR = '繰り返しタスクには due_date が必要です';
+export const REPEAT_SCHEDULED_DATE_ERROR =
+  '繰り返しタスクには scheduled_date が必要です';
+export const REPEAT_DEADLINE_ERROR =
+  '繰り返しタスクに due_date / due_time は指定できません';
+export const SCHEDULED_TIME_DATE_ERROR =
+  'scheduled_time を指定するには scheduled_date が必要です';
 /** A done row keeps no rule: completion hands it to the next occurrence. */
 export const REPEAT_OPEN_ONLY_ERROR =
   '繰り返しは未完了のタスクにのみ設定できます';
@@ -59,7 +64,9 @@ function formatDate(value: Date): string {
 function addDays(value: string, amount: number): string {
   const parts = parseDate(value);
   if (!parts)
-    throw new RepeatRuleError('due_date は YYYY-MM-DD 形式で指定してください');
+    throw new RepeatRuleError(
+      'scheduled_date は YYYY-MM-DD 形式で指定してください',
+    );
   const date = dateValue(parts[0], parts[1], parts[2]);
   date.setUTCDate(date.getUTCDate() + amount);
   return formatDate(date);
@@ -128,10 +135,13 @@ export function validateRepeatRule(value: unknown): string | null {
 export function validateRepeatState(
   rule: RepeatRule | null | undefined,
   status: 'open' | 'done',
+  scheduledDate: string | null,
   dueDate: string | null,
+  dueTime: string | null,
 ): string | null {
   if (rule === null || rule === undefined) return null;
-  if (dueDate === null) return REPEAT_DUE_DATE_ERROR;
+  if (scheduledDate === null) return REPEAT_SCHEDULED_DATE_ERROR;
+  if (dueDate !== null || dueTime !== null) return REPEAT_DEADLINE_ERROR;
   if (status === 'done') return REPEAT_OPEN_ONLY_ERROR;
   return null;
 }
@@ -139,9 +149,35 @@ export function validateRepeatState(
 export function assertRepeatState(
   rule: RepeatRule | null | undefined,
   status: 'open' | 'done',
+  scheduledDate: string | null,
   dueDate: string | null,
+  dueTime: string | null,
 ): void {
-  const message = validateRepeatState(rule, status, dueDate);
+  const message = validateRepeatState(
+    rule,
+    status,
+    scheduledDate,
+    dueDate,
+    dueTime,
+  );
+  if (message) throw new RepeatRuleError(message);
+}
+
+/** A one-off may be scheduled, but a scheduled time always needs its date. */
+export function validateScheduleState(
+  scheduledDate: string | null,
+  scheduledTime: string | null,
+): string | null {
+  return scheduledTime !== null && scheduledDate === null
+    ? SCHEDULED_TIME_DATE_ERROR
+    : null;
+}
+
+export function assertScheduleState(
+  scheduledDate: string | null,
+  scheduledTime: string | null,
+): void {
+  const message = validateScheduleState(scheduledDate, scheduledTime);
   if (message) throw new RepeatRuleError(message);
 }
 
@@ -156,7 +192,7 @@ function nextAfter(rule: RepeatRule, fromDate: string): string {
     const parts = parseDate(fromDate);
     if (!parts)
       throw new RepeatRuleError(
-        'due_date は YYYY-MM-DD 形式で指定してください',
+        'scheduled_date は YYYY-MM-DD 形式で指定してください',
       );
     const weekdays = rule.slice('weekly:'.length).split(',').map(Number);
     const weekday = dateValue(parts[0], parts[1], parts[2]).getUTCDay();
@@ -170,7 +206,7 @@ function nextAfter(rule: RepeatRule, fromDate: string): string {
     const parts = parseDate(fromDate);
     if (!parts)
       throw new RepeatRuleError(
-        'due_date は YYYY-MM-DD 形式で指定してください',
+        'scheduled_date は YYYY-MM-DD 形式で指定してください',
       );
     let year = parts[0];
     let month = parts[1] + 1;
@@ -192,20 +228,20 @@ function nextAfter(rule: RepeatRule, fromDate: string): string {
  */
 export function nextRepeatDate(
   rule: RepeatRule,
-  dueDate: string,
+  scheduledDate: string,
   today: string,
 ): string {
   if (!isValidRepeatRule(rule)) throw new RepeatRuleError(REPEAT_RULE_ERROR);
-  if (!parseDate(dueDate) || !parseDate(today)) {
+  if (!parseDate(scheduledDate) || !parseDate(today)) {
     throw new RepeatRuleError('日付は YYYY-MM-DD 形式で指定してください');
   }
 
-  let next = nextAfter(rule, dueDate);
+  let next = nextAfter(rule, scheduledDate);
   let iterations = 1;
   while (next <= today) {
     if (iterations >= MAX_ADVANCE_ITERATIONS) {
       throw new RepeatRuleError(
-        '繰り返しの日付計算が上限を超えました。due_dateを新しくしてください',
+        '繰り返しの日付計算が上限を超えました。scheduled_dateを新しくしてください',
       );
     }
     next = nextAfter(rule, next);

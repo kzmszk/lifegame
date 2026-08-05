@@ -106,8 +106,10 @@ CREATE TABLE tasks (
   title        TEXT NOT NULL,
   note         TEXT NOT NULL DEFAULT '',
   status       TEXT NOT NULL DEFAULT 'open',   -- 'open' | 'done'
-  due_date     TEXT,                           -- 'YYYY-MM-DD' (なければ Inbox 扱い)
-  due_time     TEXT,                           -- 'HH:MM' 任意
+  due_date     TEXT,                           -- 期限 ('YYYY-MM-DD')
+  due_time     TEXT,                           -- 期限時刻 ('HH:MM') 任意
+  scheduled_date TEXT,                         -- 実行予定日 ('YYYY-MM-DD') 任意
+  scheduled_time TEXT,                         -- 実行予定時刻 ('HH:MM') 任意
   priority     INTEGER NOT NULL DEFAULT 0,     -- 0:通常 1:高
   tags         TEXT NOT NULL DEFAULT '',       -- MVPはカンマ区切り
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
@@ -115,6 +117,7 @@ CREATE TABLE tasks (
   completed_at TEXT
 );
 CREATE INDEX idx_tasks_status_due ON tasks(status, due_date);
+CREATE INDEX idx_tasks_status_scheduled ON tasks(status, scheduled_date);
 ```
 
 Phase 2 で健康・運動を追加する際は、種別つきの汎用ログテーブルを足す:
@@ -162,7 +165,8 @@ SPA が利用する JSON API。
 - **`completed_at` は `status` と連動させる**: `PATCH` で `status` を `done` にする際は同一UPDATE文の中で
   `completed_at` に現在時刻を設定し、`open` に戻す際は `NULL` にクリアする(クライアントからは送らせない)。
   今日ビューの「今日完了したタスク」はこの `completed_at` で判定するため、この契約がないと完了タスクが再読み込みで消える
-- **「今日」の判定は Asia/Tokyo の日付境界で行う**: `view=today` の期限カットオフ(`due_date <= 今日`)と
+- **「今日」の判定は Asia/Tokyo の日付境界で行う**: `view=today` は期限または実行予定日が今日以前
+  (`due_date <= 今日 OR scheduled_date <= 今日`)の未完了タスクと、
   完了日時の当日判定の両方に適用する。D1/SQLite の `date('now')` は UTC のため使わず、
   Worker 側で JST の「今日」を計算してクエリパラメータとして渡す(UTCのままだと 00:00〜08:59 JST に当日タスクが表示されない)
 
@@ -385,7 +389,8 @@ Phase 2 のうち繰り返しタスクだけを切り出して先に作る。健
 
 ### 13.2 不変条件: 繰り返しは open な回だけが持つ
 
-**`repeat_rule` があるなら `status = 'open'` かつ `due_date IS NOT NULL`。**
+**`repeat_rule` があるなら `status = 'open'`、`scheduled_date IS NOT NULL`、
+`due_date IS NULL`、`due_time IS NULL`。**
 完了時にルールを親から消し、生成した次回へ渡す。
 
 最初の実装ではルールを完了後も残していた。するとレビューで、同じ不具合が4つの経路から出た
@@ -411,21 +416,26 @@ Phase 2 のうち繰り返しタスクだけを切り出して先に作る。健
 一覧の `↻` はそれで出せる。履歴からルールの内容までは辿れないが、生きているシリーズを
 見れば分かるので実用上困らない。
 
-### 13.3 スキーマ (migration 0003)
+### 13.3 スキーマ (migration 0004)
 
 ```sql
 -- 実際には SQLite が既存テーブルへの CHECK 追加をできないため、
 -- 新テーブル作成 → コピー → DROP → RENAME で入れ替える。
 repeat_rule     TEXT,      -- NULL = 繰り返さない
 repeat_child_id INTEGER,   -- 生成した次回。シリーズの一回だった印
-CHECK (repeat_rule IS NULL OR (status = 'open' AND due_date IS NOT NULL))
+scheduled_date  TEXT,      -- 実行予定日。期限とは別の概念
+scheduled_time  TEXT,      -- 実行予定時刻
+CHECK (scheduled_time IS NULL OR scheduled_date IS NOT NULL)
+CHECK (repeat_rule IS NULL OR (
+  status = 'open' AND scheduled_date IS NOT NULL AND due_date IS NULL AND due_time IS NULL
+))
 ```
 
 インデックスは足さない。`repeat_rule` で絞る問い合わせが無い(繰り返しは完了時に1件ずつ
 たどるだけ)ため。
 
 **CHECK 制約が正しさの担保**で、アプリ側の検証は**エラーメッセージのため**にある。
-この2つは役割が違う。検証は「繰り返しには due_date が必要です」のように理由を返すためのもので、
+この2つは役割が違う。検証は「繰り返しには scheduled_date が必要です」のように理由を返すためのもので、
 競合で検証をすり抜けた書き込みは制約が拒否する。制約違反を 409 に写すのは**更新の経路だけ**。
 新しい行は何とも競合しないので、INSERT で制約が落ちたら「検証とスキーマが食い違っている」という
 こちらの不具合であり、再試行のしようがない。そのまま 500 で出す。
@@ -436,7 +446,10 @@ CHECK (repeat_rule IS NULL OR (status = 'open' AND due_date IS NOT NULL))
 「繰り返しをやめる」が既にルールを手放した親に当たって成功を返し、子は回り続ける。
 保存される値はどれも妥当なので制約には引っかからない。
 
-本番の既存行はすべて `repeat_rule` が NULL(この機能は未デプロイ)なので、コピーは無条件に通る。
+0004 はテーブルを再作成し、既存の繰り返し行(`repeat_rule` / `repeat_child_id` が非NULL、または
+その `repeat_child_id` から参照される停止済みの末尾回)の旧 `due_*` を `scheduled_*` へ**移動**して
+`due_*` をNULLにする。id・タイムスタンプ・
+AUTOINCREMENT の高水位・インデックスは引き継ぐ。
 
 ### 13.3 `repeat_rule` の書式
 
@@ -459,7 +472,7 @@ RRULE (RFC 5545) は採らない。UI で出す選択肢が4種しかないの�
 
 ### 13.4 次回の日付をどう決めるか
 
-**基点は完了日ではなく、完了したタスクの `due_date`**。毎週月曜のゴミ出しを火曜に片付けても、
+**基点は完了日ではなく、完了したタスクの `scheduled_date`**。毎週月曜のゴミ出しを火曜に片付けても、
 次は翌週の月曜であるべきで、翌週の火曜ではない。
 
 ただし基点をそのまま1回だけ進めると、1ヶ月放置していた場合に次回が過去日になり、
@@ -467,12 +480,13 @@ RRULE (RFC 5545) は採らない。UI で出す選択肢が4種しかないの�
 **規則で進めることを、今日より後になるまで繰り返す**。
 
 - 進める回数には**上限 10,000 回**を置き、超えたら 400 で断る。毎日の繰り返しなら約27年分に当たる。
-  そこまで古い `due_date` は入力ミスとして扱い、日付を入れ直してもらうほうが、
+  そこまで古い `scheduled_date` は入力ミスとして扱い、日付を入れ直してもらうほうが、
   黙って何万回も回すより早く気づける。`every:N` を 1〜366 に制限しているのと同じ理由で、
   **検証が通す範囲と計算できる範囲を揃える**ため
-- `due_date` が NULL の繰り返しタスク(Inbox の繰り返し)は**作らせない**。基点が無く
+- `scheduled_date` が NULL の繰り返しタスク(Inbox の繰り返し)は**作らせない**。基点が無く
   次回を決められない。API と MCP で 400 にする
-- `due_time` はそのまま引き継ぐ。`title` / `note` / `priority` / `tags` / `repeat_rule` も同じ
+- `scheduled_time` はそのまま引き継ぐ。子の `due_date` / `due_time` は必ずNULLにする。
+  `title` / `note` / `priority` / `tags` / `repeat_rule` も同じ
 - `completed_at` は当然引き継がない。次回は `status = 'open'`
 
 ### 13.5 生成をどこに置くか
@@ -484,13 +498,13 @@ RRULE (RFC 5545) は採らない。UI で出す選択肢が4種しかないの�
 条件は「`status` が `open` → `done` に変わり、`repeat_rule` がある」。D1 の `batch()` で3文を1回にまとめる。
 
 1. 親を完了にし、**`repeat_rule` を NULL にして** `repeat_child_id = -1` を立てる。
-   WHERE は `status = 'open'` と、**次回日付の計算根拠にした `repeat_rule` / `due_date` の一致**
+   WHERE は `status = 'open'` と、**次回日付の計算根拠にした `repeat_rule` / `scheduled_date` の一致**
 2. `repeat_child_id = -1` の行からコピーして次回を INSERT。ルールと次回日付はバインドで渡す
    (親のルールはもう消えているため)
 3. `-1` を実際の子の id に置き換える
 
 WHERE の一致条件は**値が古くなることを防ぐためだけに残している**。状態の正しさは CHECK 制約が
-持っているので、ここで守るのは「読んだ `due_date` から計算した次回日付が、その `due_date` が
+持っているので、ここで守るのは「読んだ `scheduled_date` から計算した次回日付が、その `scheduled_date` が
 変わった後に書かれる」という**値の食い違い**のほう。制約では守れない種類の問題なのでこちらに置く。
 
 `-1` のセンチネルは 2 と 3 を 1 に紐付けるためのもの。`batch()` はトランザクショナルなので
@@ -506,14 +520,16 @@ WHERE の一致条件は**値が古くなることを防ぐためだけに残し
 `repeat_rule` を受け取り、`Task` に載せて返すだけ。
 
 - **クイック追加**: パーサー(`src/lib/parse.ts`)に「毎日」「毎週月曜」「毎月15日」「3日ごと」を
-  足し、`TaskDraft` に `repeat_rule` を持たせる。Phase 5 で入れた確認ダイアログに繰り返しを
+  足し、繰り返しなら `scheduled_date` / `scheduled_time`、単発なら `due_date` / `due_time` を
+  `TaskDraft` に入れる。Phase 5 で入れた確認ダイアログに繰り返しを
   表示するので、誤爆はそこで直せる
-- **詳細画面**: 繰り返しの選択(なし / 毎日 / 毎週(曜日) / 毎月(日) / N日ごと)
+- **詳細画面**: 繰り返しの選択(なし / 毎日 / 毎週(曜日) / 毎月(日) / N日ごと)。有効時は
+  期限を「今回の実行日 / 実行時刻」に移して期限列をクリアする。無効化後も実行予定は単発の予定として残す
 - **一覧・今日ビュー**: 繰り返しのタスクに `↻` を出す
 
 ### 13.7 MCP への影響と認可
 
-`create_task` / `update_task` の入力に `repeat_rule` を足し、`list_tasks` と
+`create_task` / `update_task` の入力に `repeat_rule` と `scheduled_date` / `scheduled_time` を足し、`list_tasks` と
 `get_daily_summary` の出力に含める。
 
 **新しいスコープは作らない**。繰り返しはタスクの属性であって新しいデータ源ではなく、
