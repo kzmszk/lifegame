@@ -5,8 +5,19 @@ import type {
   TaskStatus,
   TaskUpdateInput,
 } from '../shared/types';
+import { assertRepeatState, nextRepeatDate } from '../lib/repeat';
+import { tokyoToday } from '../lib/time';
 
 export type TaskView = 'today' | 'inbox' | 'all';
+
+export class TaskConflictError extends Error {
+  constructor(
+    message = 'タスクが別の更新と競合しました。最新の内容を確認してからもう一度お試しください',
+  ) {
+    super(message);
+    this.name = 'TaskConflictError';
+  }
+}
 
 interface TaskRow {
   id: number;
@@ -17,19 +28,32 @@ interface TaskRow {
   due_time: string | null;
   priority: number;
   tags: string;
+  repeat_rule: Task['repeat_rule'];
+  repeat_child_id: number | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
 }
 
 const TASK_COLUMNS = `id, title, note, status, due_date, due_time, priority, tags,
-  created_at, updated_at, completed_at`;
+  repeat_rule, repeat_child_id, created_at, updated_at, completed_at`;
+
+function isCheckConstraintError(thrown: unknown): boolean {
+  // D1 does not expose a structured constraint-error code, so its message is
+  // the only signal available for distinguishing this race from other errors.
+  return (
+    thrown instanceof Error &&
+    thrown.message.includes('CHECK constraint failed')
+  );
+}
 
 function toTask(row: TaskRow): Task {
   return {
     ...row,
     status: row.status === 'done' ? 'done' : 'open',
     priority: Number(row.priority) || 0,
+    repeat_child_id:
+      row.repeat_child_id === null ? null : Number(row.repeat_child_id),
   };
 }
 
@@ -81,11 +105,14 @@ export async function createTask(
     Omit<TaskCreateInput, 'title'>,
 ): Promise<Task> {
   const status = input.status ?? 'open';
+  // No conflict mapping here on purpose. A new row races with nothing, so a
+  // constraint failure on insert means validation and the schema disagree —
+  // a defect to surface, not something the caller can usefully retry.
   const result = await db
     .prepare(
       `INSERT INTO tasks
-      (title, note, status, due_date, due_time, priority, tags, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
+      (title, note, status, due_date, due_time, priority, tags, repeat_rule, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
     )
     .bind(
       input.title,
@@ -95,6 +122,7 @@ export async function createTask(
       input.due_time ?? null,
       input.priority ?? 0,
       input.tags ?? '',
+      input.repeat_rule ?? null,
       status,
     )
     .run();
@@ -109,6 +137,15 @@ export async function updateTask(
   id: number,
   input: TaskUpdateInput,
 ): Promise<Task | null> {
+  const current = await getTask(db, id);
+  if (!current) return null;
+
+  const finalRule =
+    input.repeat_rule !== undefined ? input.repeat_rule : current.repeat_rule;
+  const finalDueDate =
+    input.due_date !== undefined ? input.due_date : current.due_date;
+  const finalStatus = input.status ?? current.status;
+
   const updates: string[] = [];
   const bindings: Array<string | number | null> = [];
 
@@ -136,6 +173,10 @@ export async function updateTask(
     updates.push('tags = ?');
     bindings.push(input.tags);
   }
+  if (input.repeat_rule !== undefined) {
+    updates.push('repeat_rule = ?');
+    bindings.push(input.repeat_rule);
+  }
   if (input.status !== undefined) {
     updates.push('status = ?');
     bindings.push(input.status);
@@ -146,15 +187,113 @@ export async function updateTask(
     bindings.push(input.status);
   }
 
-  if (updates.length === 0) return getTask(db, id);
+  const shouldGenerateChild =
+    current.status === 'open' &&
+    input.status === 'done' &&
+    finalRule !== null &&
+    finalRule !== undefined &&
+    finalDueDate !== null;
+
+  // Validate the state that will actually be stored. A completion hands its
+  // rule to the child, so the row this request writes ends up without one.
+  assertRepeatState(
+    shouldGenerateChild ? null : finalRule,
+    finalStatus,
+    finalDueDate,
+  );
+
+  if (updates.length === 0) return current;
+
+  if (shouldGenerateChild) {
+    const nextDueDate = nextRepeatDate(finalRule, finalDueDate, tokyoToday());
+    const sourceUpdate = `${updates.join(', ')}, repeat_rule = NULL,
+      repeat_child_id = -1, updated_at = datetime('now')`;
+    const sourceBindings: Array<string | number | null> = [
+      ...bindings,
+      id,
+      current.repeat_rule,
+      current.due_date,
+    ];
+    const statements = [
+      db
+        .prepare(
+          `UPDATE tasks SET ${sourceUpdate}
+          WHERE id = ? AND status = 'open' AND repeat_rule IS ? AND due_date IS ?`,
+        )
+        .bind(...sourceBindings),
+      db
+        .prepare(
+          `INSERT INTO tasks
+          (title, note, status, due_date, due_time, priority, tags, repeat_rule, repeat_child_id, completed_at)
+          SELECT title, note, 'open', ?, due_time, priority, tags, ?, NULL, NULL
+          FROM tasks
+          WHERE id = ? AND repeat_child_id = -1`,
+        )
+        .bind(nextDueDate, finalRule, id),
+      db
+        .prepare(
+          `UPDATE tasks SET repeat_child_id = last_insert_rowid(), updated_at = datetime('now')
+          WHERE id = ? AND repeat_child_id = -1`,
+        )
+        .bind(id),
+    ];
+    let results;
+    try {
+      results = await db.batch(statements);
+    } catch (thrown) {
+      if (isCheckConstraintError(thrown)) throw new TaskConflictError();
+      throw thrown;
+    }
+    if (!results[0]?.success) return null;
+    if (results[0].meta.changes === 0) {
+      const latest = await getTask(db, id);
+      if (!latest) return latest;
+      // A double-tapped complete toggle is the same request twice, so reporting
+      // the already-done task is honest. A request that also carried edits is
+      // not: those fields were never written, and returning success would drop
+      // them silently.
+      const completionOnly =
+        Object.keys(input).length === 1 && input.status === 'done';
+      if (latest.status === 'done' && completionOnly) return latest;
+      throw new TaskConflictError();
+    }
+    if (!results[1]?.success || results[1].meta.changes === 0)
+      throw new Error('繰り返しタスクの次回生成に失敗しました');
+    if (!results[2]?.success || results[2].meta.changes === 0)
+      throw new Error('繰り返しタスクの関連付けに失敗しました');
+    return getTask(db, id);
+  }
+
   updates.push("updated_at = datetime('now')");
   bindings.push(id);
 
-  const result = await db
-    .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`)
-    .bind(...bindings)
-    .run();
-  if (!result.success || result.meta.changes === 0) return null;
+  // The rule is the one field that can leave this row: completing the task
+  // hands it to the child. So a request that writes repeat_rule — turning the
+  // recurrence off, or changing it — has to confirm the rule is still here.
+  // Otherwise cancelling a recurrence that a concurrent completion already
+  // moved reports success against a parent that no longer owns it, while the
+  // child keeps repeating. The constraint cannot catch this: nothing invalid
+  // is stored, the write just lands on the wrong row.
+  const guardsRule = input.repeat_rule !== undefined;
+  const where = guardsRule ? 'id = ? AND repeat_rule IS ?' : 'id = ?';
+  if (guardsRule) bindings.push(current.repeat_rule);
+
+  let result;
+  try {
+    result = await db
+      .prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE ${where}`)
+      .bind(...bindings)
+      .run();
+  } catch (thrown) {
+    if (isCheckConstraintError(thrown)) throw new TaskConflictError();
+    throw thrown;
+  }
+  if (!result.success) return null;
+  if (result.meta.changes === 0) {
+    const latest = await getTask(db, id);
+    if (!latest) return null;
+    throw new TaskConflictError();
+  }
   return getTask(db, id);
 }
 

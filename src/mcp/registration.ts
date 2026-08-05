@@ -35,6 +35,13 @@ const createTaskSchema = {
   priority: prioritySchema.describe('優先度。0は通常、1は高'),
   tags: z.string().optional().describe('カンマ区切りのタグ'),
   note: z.string().optional().describe('補足メモ'),
+  repeat_rule: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      '繰り返し。daily、weekly:曜日、monthly:日、every:日数。nullで解除',
+    ),
 };
 
 const updateTaskSchema = {
@@ -49,6 +56,13 @@ const updateTaskSchema = {
     .enum(['open', 'done'])
     .optional()
     .describe('openまたはdone。completed_atも連動して更新'),
+  repeat_rule: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      '繰り返し。daily、weekly:曜日、monthly:日、every:日数。nullで解除',
+    ),
 };
 
 function jsonToolResult(value: unknown): {

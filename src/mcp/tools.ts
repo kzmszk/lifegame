@@ -3,11 +3,17 @@ import {
   createTask,
   deleteTask,
   listTasks,
+  TaskConflictError,
   updateTask,
   type TaskView,
 } from '../db/tasks';
 import { tokyoDayBounds } from '../lib/time';
 import { fieldsFromBody, validateFields } from '../lib/task-validation';
+import {
+  normalizeRepeatRule,
+  RepeatRuleError,
+  validateRepeatState,
+} from '../lib/repeat';
 import { listCalendarEvents, listHolidays } from '../lib/google-calendar';
 import type { CalendarEvent, Task, TaskCreateInput } from '../shared/types';
 import type { Env } from '../env';
@@ -175,8 +181,21 @@ export async function createTaskForMcp(
     due_time: typeof body.due_time === 'string' ? body.due_time : null,
     priority: typeof body.priority === 'number' ? body.priority : 0,
     tags: typeof body.tags === 'string' ? body.tags : '',
+    repeat_rule: normalizeRepeatRule(body.repeat_rule) ?? null,
   };
-  return createTask(db, createInput);
+  const repeatError = validateRepeatState(
+    createInput.repeat_rule ?? null,
+    typeof body.status === 'string' && body.status === 'done' ? 'done' : 'open',
+    createInput.due_date ?? null,
+  );
+  if (repeatError) throw new McpToolError(repeatError);
+  try {
+    return await createTask(db, createInput);
+  } catch (thrown) {
+    if (thrown instanceof TaskConflictError)
+      throw new McpToolError(thrown.message);
+    throw thrown;
+  }
 }
 
 export async function updateTaskForMcp(
@@ -190,7 +209,16 @@ export async function updateTaskForMcp(
   // A no-op update would return the task, turning tasks:write into a read.
   if (Object.keys(body).length === 0)
     throw new McpToolError('更新する項目を1つ以上指定してください');
-  const task = await updateTask(db, id, fieldsFromBody(body));
+  let task: Task | null;
+  try {
+    task = await updateTask(db, id, fieldsFromBody(body));
+  } catch (thrown) {
+    if (thrown instanceof RepeatRuleError)
+      throw new McpToolError(thrown.message);
+    if (thrown instanceof TaskConflictError)
+      throw new McpToolError(thrown.message);
+    throw thrown;
+  }
   if (!task) throw new McpToolError('タスクが見つかりません');
   return task;
 }

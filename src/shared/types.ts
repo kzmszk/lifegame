@@ -1,3 +1,5 @@
+import type { RepeatRule } from '../lib/repeat';
+
 export type TaskStatus = 'open' | 'done';
 
 export type TaskView = 'today' | 'inbox' | 'all';
@@ -11,6 +13,8 @@ export interface Task {
   due_time: string | null;
   priority: number;
   tags: string;
+  repeat_rule: RepeatRule | null;
+  repeat_child_id: number | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -23,6 +27,7 @@ export interface TaskDraft {
   due_time: string | null;
   priority: number;
   tags: string;
+  repeat_rule: RepeatRule | null;
 }
 
 export interface TaskCreateInput {
@@ -33,6 +38,7 @@ export interface TaskCreateInput {
   due_time?: string | null;
   priority?: number;
   tags?: string;
+  repeat_rule?: RepeatRule | null;
   status?: TaskStatus;
 }
 
@@ -43,6 +49,7 @@ export interface TaskUpdateInput {
   due_time?: string | null;
   priority?: number;
   tags?: string;
+  repeat_rule?: RepeatRule | null;
   status?: TaskStatus;
 }
 

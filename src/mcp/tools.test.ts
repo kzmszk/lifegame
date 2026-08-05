@@ -14,6 +14,7 @@ import {
   updateTaskForMcp,
 } from './tools';
 import { assertMcpScope } from './auth';
+import { REPEAT_DUE_DATE_ERROR } from '../lib/repeat';
 import type { Env } from '../env';
 
 interface Row {
@@ -25,6 +26,8 @@ interface Row {
   due_time: string | null;
   priority: number;
   tags: string;
+  repeat_rule: string | null;
+  repeat_child_id: number | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -45,6 +48,8 @@ const row = (overrides: Partial<Row>): Row => ({
   due_time: null,
   priority: 0,
   tags: '',
+  repeat_rule: null,
+  repeat_child_id: null,
   created_at: '2026-08-01 00:00:00',
   updated_at: '2026-08-01 00:00:00',
   completed_at: null,
@@ -112,6 +117,7 @@ class FakeStatement {
         dueTime,
         priority,
         tags,
+        repeatRule,
         completedStatus,
       ] = this.bindings;
       const id = Math.max(0, ...this.database.rows.map((task) => task.id)) + 1;
@@ -125,6 +131,7 @@ class FakeStatement {
           due_time: dueTime as string | null,
           priority: Number(priority),
           tags: String(tags),
+          repeat_rule: repeatRule as string | null,
           completed_at:
             completedStatus === 'done' ? '2026-08-03 01:00:00' : null,
         }),
@@ -134,11 +141,21 @@ class FakeStatement {
 
     if (this.sql.startsWith('UPDATE')) {
       const updatePart =
-        this.sql.match(/UPDATE tasks SET (.+) WHERE id = \?$/)?.[1] ?? '';
+        this.sql.match(/UPDATE tasks SET (.+?)\s+WHERE/s)?.[1] ?? '';
       const clauses = updatePart.split(', ');
-      const id = this.bindings[this.bindings.length - 1];
+      // The optimistic-concurrency guards bind after the id, so count the SET
+      // placeholders instead of reading the last binding.
+      const setBindingCount = (updatePart.match(/\?/g) ?? []).length;
+      const id = this.bindings[setBindingCount];
       const task = this.database.rows.find((candidate) => candidate.id === id);
       if (!task) return this.result({ changes: 0 });
+
+      let guardIndex = setBindingCount + 1;
+      for (const column of ['due_date', 'status', 'repeat_rule'] as const) {
+        if (!this.sql.includes(`${column} IS ?`)) continue;
+        if (task[column] !== this.bindings[guardIndex++])
+          return this.result({ changes: 0 });
+      }
 
       let bindingIndex = 0;
       for (const clause of clauses) {
@@ -182,12 +199,24 @@ class FakeStatement {
 class FakeD1 {
   rows: Row[];
 
-  constructor(rows: Row[]) {
+  constructor(
+    rows: Row[],
+    private readonly beforeBatch?: () => void,
+  ) {
     this.rows = rows;
   }
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
+  }
+
+  async batch(): Promise<FakeResult<unknown>[]> {
+    this.beforeBatch?.();
+    return [0, 0, 0].map(() => ({
+      results: [],
+      success: true as const,
+      meta: { changes: 0 },
+    }));
   }
 }
 
@@ -324,11 +353,30 @@ describe('MCP tool handlers', () => {
       [{ title: 'x', priority: 2 }, 'priority'],
       [{ title: 'x', status: 'paused' }, 'status'],
       [{ title: 'x', completed_at: null }, 'completed_at'],
+      [{ title: 'x', repeat_rule: 'weekly:9' }, 'repeat_rule'],
     ];
 
     for (const [input, field] of invalidCases) {
       await expect(createTaskForMcp(db, input)).rejects.toThrow(field);
     }
+  });
+
+  // The rule needs an anchor to advance from; without one the task would
+  // complete once and never come back.
+  it('refuses a recurring task with no due_date', async () => {
+    const db = new FakeD1([]) as unknown as D1Database;
+
+    await expect(
+      createTaskForMcp(db, { title: 'ゴミ出し', repeat_rule: 'daily' }),
+    ).rejects.toThrow(new McpToolError(REPEAT_DUE_DATE_ERROR));
+
+    await expect(
+      createTaskForMcp(db, {
+        title: 'ゴミ出し',
+        due_date: '2026-08-10',
+        repeat_rule: 'weekly:1,4',
+      }),
+    ).resolves.toMatchObject({ repeat_rule: 'weekly:1,4' });
   });
 
   it('keeps completed_at coupled to status for MCP updates', async () => {
@@ -342,6 +390,22 @@ describe('MCP tool handlers', () => {
     const reopened = await updateTaskForMcp(db, 1, { status: 'open' });
     expect(reopened.status).toBe('open');
     expect(reopened.completed_at).toBeNull();
+  });
+
+  it('maps a recurring-task conflict to McpToolError', async () => {
+    const db = new FakeD1([
+      row({
+        id: 1,
+        due_date: '2026-08-01',
+        repeat_rule: 'daily',
+      }),
+    ]) as unknown as D1Database;
+
+    await expect(updateTaskForMcp(db, 1, { status: 'done' })).rejects.toThrow(
+      new McpToolError(
+        'タスクが別の更新と競合しました。最新の内容を確認してからもう一度お試しください',
+      ),
+    );
   });
 
   it('reports delete and update not-found cases and invalid IDs', async () => {

@@ -6,10 +6,16 @@ import {
   deleteTask,
   getTask,
   listTasks,
+  TaskConflictError,
   updateTask,
   type TaskView,
 } from '../db/tasks';
 import { parse } from '../lib/parse';
+import {
+  normalizeRepeatRule,
+  RepeatRuleError,
+  validateRepeatState,
+} from '../lib/repeat';
 import { getAccessUser, isAccessAuthError } from '../lib/access';
 import { tokyoDayBounds, tokyoToday } from '../lib/time';
 import {
@@ -46,7 +52,7 @@ const MAX_GRANT_ID_LENGTH = 256;
 function error(
   c: Context<{ Bindings: Env }>,
   message: string,
-  status: 400 | 401 | 403 | 404 | 405 | 500 | 502,
+  status: 400 | 401 | 403 | 404 | 405 | 409 | 500 | 502,
 ) {
   return c.json<ErrorResponse>({ error: message }, status);
 }
@@ -135,6 +141,9 @@ api.post('/tasks', async (c) => {
           ? draft.priority
           : (body.priority as number),
       tags: typeof body.tags === 'string' ? body.tags : draft.tags,
+      repeat_rule: hasOwn(body, 'repeat_rule')
+        ? (normalizeRepeatRule(body.repeat_rule) ?? null)
+        : draft.repeat_rule,
       status: parseStatus(body.status),
     };
   } else {
@@ -147,15 +156,28 @@ api.post('/tasks', async (c) => {
       due_time: (body.due_time as string | null | undefined) ?? null,
       priority: (body.priority as number | undefined) ?? 0,
       tags: (body.tags as string | undefined) ?? '',
+      repeat_rule: normalizeRepeatRule(body.repeat_rule) ?? null,
       status: parseStatus(body.status),
     };
   }
-  const task = await createTask(
-    c.env.DB,
-    input as Required<Pick<TaskCreateInput, 'title'>> &
-      Omit<TaskCreateInput, 'title'>,
+  const repeatError = validateRepeatState(
+    input.repeat_rule ?? null,
+    input.status ?? 'open',
+    input.due_date ?? null,
   );
-  return c.json({ task }, 201);
+  if (repeatError) return error(c, repeatError, 400);
+  try {
+    const task = await createTask(
+      c.env.DB,
+      input as Required<Pick<TaskCreateInput, 'title'>> &
+        Omit<TaskCreateInput, 'title'>,
+    );
+    return c.json({ task }, 201);
+  } catch (thrown) {
+    if (thrown instanceof TaskConflictError)
+      return error(c, thrown.message, 409);
+    throw thrown;
+  }
 });
 
 api.patch('/tasks/:id', async (c) => {
@@ -169,8 +191,15 @@ api.patch('/tasks/:id', async (c) => {
   if (!body) return error(c, 'JSON オブジェクトを指定してください', 400);
   const fieldError = validateFields(body);
   if (fieldError) return error(c, fieldError, 400);
-  const task = await updateTask(c.env.DB, id, fieldsFromBody(body));
-  return task ? c.json({ task }) : error(c, 'タスクが見つかりません', 404);
+  try {
+    const task = await updateTask(c.env.DB, id, fieldsFromBody(body));
+    return task ? c.json({ task }) : error(c, 'タスクが見つかりません', 404);
+  } catch (thrown) {
+    if (thrown instanceof RepeatRuleError) return error(c, thrown.message, 400);
+    if (thrown instanceof TaskConflictError)
+      return error(c, thrown.message, 409);
+    throw thrown;
+  }
 });
 
 api.delete('/tasks/:id', async (c) => {
