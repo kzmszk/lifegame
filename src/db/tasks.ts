@@ -5,7 +5,11 @@ import type {
   TaskStatus,
   TaskUpdateInput,
 } from '../shared/types';
-import { assertRepeatState, nextRepeatDate } from '../lib/repeat';
+import {
+  assertRepeatState,
+  assertScheduleState,
+  nextRepeatDate,
+} from '../lib/repeat';
 import { tokyoToday } from '../lib/time';
 
 export type TaskView = 'today' | 'inbox' | 'all';
@@ -26,6 +30,8 @@ interface TaskRow {
   status: TaskStatus;
   due_date: string | null;
   due_time: string | null;
+  scheduled_date: string | null;
+  scheduled_time: string | null;
   priority: number;
   tags: string;
   repeat_rule: Task['repeat_rule'];
@@ -35,8 +41,26 @@ interface TaskRow {
   completed_at: string | null;
 }
 
-const TASK_COLUMNS = `id, title, note, status, due_date, due_time, priority, tags,
+const TASK_COLUMNS = `id, title, note, status, due_date, due_time, scheduled_date, scheduled_time, priority, tags,
   repeat_rule, repeat_child_id, created_at, updated_at, completed_at`;
+
+const ACTIONABLE_DATE = `CASE
+  WHEN due_date IS NULL THEN scheduled_date
+  WHEN scheduled_date IS NULL THEN due_date
+  WHEN due_date <= scheduled_date THEN due_date
+  ELSE scheduled_date
+END`;
+
+const ACTIONABLE_TIME = `CASE
+  WHEN due_date IS NULL THEN scheduled_time
+  WHEN scheduled_date IS NULL THEN due_time
+  WHEN due_date < scheduled_date THEN due_time
+  WHEN scheduled_date < due_date THEN scheduled_time
+  WHEN due_time IS NULL THEN scheduled_time
+  WHEN scheduled_time IS NULL THEN due_time
+  WHEN due_time <= scheduled_time THEN due_time
+  ELSE scheduled_time
+END`;
 
 function isCheckConstraintError(thrown: unknown): boolean {
   // D1 does not expose a structured constraint-error code, so its message is
@@ -50,6 +74,10 @@ function isCheckConstraintError(thrown: unknown): boolean {
 function toTask(row: TaskRow): Task {
   return {
     ...row,
+    due_date: row.due_date ?? null,
+    due_time: row.due_time ?? null,
+    scheduled_date: row.scheduled_date ?? null,
+    scheduled_time: row.scheduled_time ?? null,
     status: row.status === 'done' ? 'done' : 'open',
     priority: Number(row.priority) || 0,
     repeat_child_id:
@@ -68,15 +96,19 @@ export async function listTasks(
   let bindings: Array<string> = [];
 
   if (view === 'today') {
-    sql += ` WHERE (status = 'open' AND due_date IS NOT NULL AND due_date <= ?)
+    sql += ` WHERE (status = 'open' AND (
+        (due_date IS NOT NULL AND due_date <= ?)
+        OR (scheduled_date IS NOT NULL AND scheduled_date <= ?)
+      ))
       OR (status = 'done' AND completed_at >= ? AND completed_at < ?)`;
-    bindings = [today, dayStartUtc, nextDayStartUtc];
+    bindings = [today, today, dayStartUtc, nextDayStartUtc];
     sql += ` ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END,
-      CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC,
-      CASE WHEN due_time IS NULL THEN 1 ELSE 0 END, due_time ASC,
+      CASE WHEN ${ACTIONABLE_DATE} IS NULL THEN 1 ELSE 0 END, ${ACTIONABLE_DATE} ASC,
+      CASE WHEN ${ACTIONABLE_TIME} IS NULL THEN 1 ELSE 0 END, ${ACTIONABLE_TIME} ASC,
       priority DESC, created_at DESC`;
   } else if (view === 'inbox') {
-    sql += ` WHERE status = 'open' AND due_date IS NULL ORDER BY priority DESC, created_at DESC`;
+    sql += ` WHERE status = 'open' AND due_date IS NULL AND scheduled_date IS NULL
+      ORDER BY priority DESC, created_at DESC`;
   } else {
     sql += ` ORDER BY created_at DESC, id DESC`;
   }
@@ -105,14 +137,25 @@ export async function createTask(
     Omit<TaskCreateInput, 'title'>,
 ): Promise<Task> {
   const status = input.status ?? 'open';
+  assertScheduleState(
+    input.scheduled_date ?? null,
+    input.scheduled_time ?? null,
+  );
+  assertRepeatState(
+    input.repeat_rule ?? null,
+    status,
+    input.scheduled_date ?? null,
+    input.due_date ?? null,
+    input.due_time ?? null,
+  );
   // No conflict mapping here on purpose. A new row races with nothing, so a
   // constraint failure on insert means validation and the schema disagree —
   // a defect to surface, not something the caller can usefully retry.
   const result = await db
     .prepare(
       `INSERT INTO tasks
-      (title, note, status, due_date, due_time, priority, tags, repeat_rule, completed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
+      (title, note, status, due_date, due_time, scheduled_date, scheduled_time, priority, tags, repeat_rule, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
     )
     .bind(
       input.title,
@@ -120,6 +163,8 @@ export async function createTask(
       status,
       input.due_date ?? null,
       input.due_time ?? null,
+      input.scheduled_date ?? null,
+      input.scheduled_time ?? null,
       input.priority ?? 0,
       input.tags ?? '',
       input.repeat_rule ?? null,
@@ -144,6 +189,16 @@ export async function updateTask(
     input.repeat_rule !== undefined ? input.repeat_rule : current.repeat_rule;
   const finalDueDate =
     input.due_date !== undefined ? input.due_date : current.due_date;
+  const finalDueTime =
+    input.due_time !== undefined ? input.due_time : current.due_time;
+  const finalScheduledDate =
+    input.scheduled_date !== undefined
+      ? input.scheduled_date
+      : current.scheduled_date;
+  const finalScheduledTime =
+    input.scheduled_time !== undefined
+      ? input.scheduled_time
+      : current.scheduled_time;
   const finalStatus = input.status ?? current.status;
 
   const updates: string[] = [];
@@ -164,6 +219,14 @@ export async function updateTask(
   if (input.due_time !== undefined) {
     updates.push('due_time = ?');
     bindings.push(input.due_time);
+  }
+  if (input.scheduled_date !== undefined) {
+    updates.push('scheduled_date = ?');
+    bindings.push(input.scheduled_date);
+  }
+  if (input.scheduled_time !== undefined) {
+    updates.push('scheduled_time = ?');
+    bindings.push(input.scheduled_time);
   }
   if (input.priority !== undefined) {
     updates.push('priority = ?');
@@ -192,44 +255,51 @@ export async function updateTask(
     input.status === 'done' &&
     finalRule !== null &&
     finalRule !== undefined &&
-    finalDueDate !== null;
+    finalScheduledDate !== null;
 
   // Validate the state that will actually be stored. A completion hands its
   // rule to the child, so the row this request writes ends up without one.
+  assertScheduleState(finalScheduledDate, finalScheduledTime);
   assertRepeatState(
     shouldGenerateChild ? null : finalRule,
     finalStatus,
+    finalScheduledDate,
     finalDueDate,
+    finalDueTime,
   );
 
   if (updates.length === 0) return current;
 
   if (shouldGenerateChild) {
-    const nextDueDate = nextRepeatDate(finalRule, finalDueDate, tokyoToday());
+    const nextScheduledDate = nextRepeatDate(
+      finalRule,
+      finalScheduledDate,
+      tokyoToday(),
+    );
     const sourceUpdate = `${updates.join(', ')}, repeat_rule = NULL,
       repeat_child_id = -1, updated_at = datetime('now')`;
     const sourceBindings: Array<string | number | null> = [
       ...bindings,
       id,
       current.repeat_rule,
-      current.due_date,
+      current.scheduled_date,
     ];
     const statements = [
       db
         .prepare(
           `UPDATE tasks SET ${sourceUpdate}
-          WHERE id = ? AND status = 'open' AND repeat_rule IS ? AND due_date IS ?`,
+          WHERE id = ? AND status = 'open' AND repeat_rule IS ? AND scheduled_date IS ?`,
         )
         .bind(...sourceBindings),
       db
         .prepare(
           `INSERT INTO tasks
-          (title, note, status, due_date, due_time, priority, tags, repeat_rule, repeat_child_id, completed_at)
-          SELECT title, note, 'open', ?, due_time, priority, tags, ?, NULL, NULL
+          (title, note, status, due_date, due_time, scheduled_date, scheduled_time, priority, tags, repeat_rule, repeat_child_id, completed_at)
+          SELECT title, note, 'open', NULL, NULL, ?, scheduled_time, priority, tags, ?, NULL, NULL
           FROM tasks
           WHERE id = ? AND repeat_child_id = -1`,
         )
-        .bind(nextDueDate, finalRule, id),
+        .bind(nextScheduledDate, finalRule, id),
       db
         .prepare(
           `UPDATE tasks SET repeat_child_id = last_insert_rowid(), updated_at = datetime('now')

@@ -255,8 +255,10 @@ export function parse(text: string, now: Date = new Date()): TaskDraft {
   return {
     title,
     note: '',
-    due_date: dueDate,
-    due_time: parsedTime.time,
+    due_date: repeatRule ? null : dueDate,
+    due_time: repeatRule ? null : parsedTime.time,
+    scheduled_date: repeatRule ? dueDate : null,
+    scheduled_time: repeatRule ? parsedTime.time : null,
     priority: 0,
     tags: '',
     repeat_rule: repeatRule,

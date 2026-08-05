@@ -11,6 +11,9 @@ export interface Task {
   status: TaskStatus;
   due_date: string | null;
   due_time: string | null;
+  /** When to perform this occurrence. This is distinct from a deadline. */
+  scheduled_date: string | null;
+  scheduled_time: string | null;
   priority: number;
   tags: string;
   repeat_rule: RepeatRule | null;
@@ -25,6 +28,8 @@ export interface TaskDraft {
   note: string;
   due_date: string | null;
   due_time: string | null;
+  scheduled_date: string | null;
+  scheduled_time: string | null;
   priority: number;
   tags: string;
   repeat_rule: RepeatRule | null;
@@ -36,6 +41,8 @@ export interface TaskCreateInput {
   note?: string;
   due_date?: string | null;
   due_time?: string | null;
+  scheduled_date?: string | null;
+  scheduled_time?: string | null;
   priority?: number;
   tags?: string;
   repeat_rule?: RepeatRule | null;
@@ -47,6 +54,8 @@ export interface TaskUpdateInput {
   note?: string;
   due_date?: string | null;
   due_time?: string | null;
+  scheduled_date?: string | null;
+  scheduled_time?: string | null;
   priority?: number;
   tags?: string;
   repeat_rule?: RepeatRule | null;

@@ -82,7 +82,7 @@ test('completing a task takes it out of Inbox', async ({ page, request }) => {
   expect(((await reread.json()) as { task: Task }).task.status).toBe('done');
 });
 
-test('task details require a due date before enabling recurrence', async ({
+test('task details move a deadline to the execution schedule when enabling recurrence', async ({
   page,
   request,
 }) => {
@@ -93,19 +93,132 @@ test('task details require a due date before enabling recurrence', async ({
   await page.getByLabel('繰り返しの頻度').selectOption('daily');
 
   await expect(
-    page.getByText('繰り返しタスクには期限が必要です。'),
+    page.getByText('繰り返しタスクには実行日が必要です。'),
   ).toBeVisible();
   const save = page.getByRole('button', { name: '変更を保存' });
   await expect(save).toBeDisabled();
 
-  await page.getByLabel('期限').fill('2026-08-05');
+  await page.getByLabel('今回の実行日').fill('2026-08-05');
   await expect(save).toBeEnabled();
   await save.click();
 
   const reread = await request.get(`/api/tasks/${task.id}`);
   const saved = ((await reread.json()) as { task: Task }).task;
   expect(saved.repeat_rule).toBe('daily');
-  expect(saved.due_date).toBe('2026-08-05');
+  expect(saved.due_date).toBeNull();
+  expect(saved.scheduled_date).toBe('2026-08-05');
+});
+
+test('enabling recurrence moves an existing deadline instead of reusing its columns', async ({
+  page,
+  request,
+}) => {
+  const title = uniqueTitle('move deadline to schedule');
+  const task = await createTask(request, title);
+  await request.patch(`/api/tasks/${task.id}`, {
+    data: { due_date: '2026-08-08', due_time: '09:30' },
+  });
+
+  await page.goto(`/tasks/${task.id}?from=today`);
+  await page.getByLabel('繰り返しの頻度').selectOption('daily');
+
+  await expect(page.getByLabel('期限')).toHaveCount(0);
+  await expect(page.getByLabel('今回の実行日')).toHaveValue('2026-08-08');
+  await expect(page.getByLabel('今回の実行時刻')).toHaveValue('09:30');
+  const save = page.getByRole('button', { name: '変更を保存' });
+  await save.click();
+
+  const reread = await request.get(`/api/tasks/${task.id}`);
+  const saved = ((await reread.json()) as { task: Task }).task;
+  expect(saved).toMatchObject({
+    due_date: null,
+    due_time: null,
+    scheduled_date: '2026-08-08',
+    scheduled_time: '09:30',
+    repeat_rule: 'daily',
+  });
+});
+
+test('enabling recurrence preserves an existing scheduled date and time over a deadline', async ({
+  page,
+  request,
+}) => {
+  const title = uniqueTitle('preserve existing schedule');
+  const response = await request.post('/api/tasks', {
+    data: {
+      title,
+      due_date: '2026-08-10',
+      due_time: '20:00',
+      scheduled_date: '2026-08-05',
+      scheduled_time: '09:00',
+    },
+  });
+  expect(response.status()).toBe(201);
+  const { task } = (await response.json()) as { task: Task };
+
+  await page.goto(`/tasks/${task.id}?from=today`);
+  await page.getByLabel('繰り返しの頻度').selectOption('daily');
+
+  await expect(page.getByLabel('今回の実行日')).toHaveValue('2026-08-05');
+  await expect(page.getByLabel('今回の実行時刻')).toHaveValue('09:00');
+  await page.getByRole('button', { name: '変更を保存' }).click();
+
+  const saved = (
+    (await (await request.get(`/api/tasks/${task.id}`)).json()) as {
+      task: Task;
+    }
+  ).task;
+  expect(saved).toMatchObject({
+    due_date: null,
+    due_time: null,
+    scheduled_date: '2026-08-05',
+    scheduled_time: '09:00',
+    repeat_rule: 'daily',
+  });
+});
+
+test('stopping recurrence retains the scheduled occurrence as a one-off schedule', async ({
+  page,
+  request,
+}) => {
+  const title = uniqueTitle('keep schedule after stopping repeat');
+  const response = await request.post('/api/tasks', {
+    data: {
+      title,
+      scheduled_date: '2026-08-08',
+      scheduled_time: '09:30',
+      repeat_rule: 'daily',
+    },
+  });
+  expect(response.status()).toBe(201);
+  const { task } = (await response.json()) as { task: Task };
+
+  await page.goto(`/tasks/${task.id}?from=today`);
+  const repeatFrequency = page.getByLabel('繰り返しの頻度');
+  await repeatFrequency.selectOption('none');
+  await expect(repeatFrequency).toHaveValue('none');
+  await expect(page.getByLabel('実行予定日')).toHaveValue('2026-08-08');
+  const stopUpdate = page.waitForRequest(
+    (candidate) =>
+      candidate.url().endsWith(`/api/tasks/${task.id}`) &&
+      candidate.method() === 'PATCH',
+  );
+  await page.getByRole('button', { name: '変更を保存' }).click();
+  expect((await stopUpdate).postDataJSON()).toMatchObject({
+    repeat_rule: null,
+  });
+  await expect(repeatFrequency).toHaveValue('none');
+
+  const stopped = (
+    (await (await request.get(`/api/tasks/${task.id}`)).json()) as {
+      task: Task;
+    }
+  ).task;
+  expect(stopped).toMatchObject({
+    repeat_rule: null,
+    scheduled_date: '2026-08-08',
+    scheduled_time: '09:30',
+  });
 });
 
 test('a recurring task created in the UI generates and persists its next occurrence', async ({
@@ -153,5 +266,7 @@ test('a recurring task created in the UI generates and persists its next occurre
   expect(completed?.repeat_rule).toBeNull();
   expect(next?.repeat_rule).toBe('daily');
   expect(completed?.repeat_child_id).toBe(next?.id);
-  expect(next?.due_date).not.toBe(completed?.due_date);
+  expect(completed?.due_date).toBeNull();
+  expect(next?.due_date).toBeNull();
+  expect(next?.scheduled_date).not.toBe(completed?.scheduled_date);
 });

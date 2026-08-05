@@ -3,9 +3,10 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { app } from '../app';
 import {
-  REPEAT_DUE_DATE_ERROR,
+  REPEAT_DEADLINE_ERROR,
   REPEAT_OPEN_ONLY_ERROR,
   REPEAT_RULE_ERROR,
+  REPEAT_SCHEDULED_DATE_ERROR,
 } from '../lib/repeat';
 
 function env(overrides: Record<string, unknown> = {}) {
@@ -133,9 +134,9 @@ describe('API safety boundaries', () => {
     expect(await response.json()).toEqual({ error: REPEAT_RULE_ERROR });
   });
 
-  // Without a due_date there is no anchor to advance from, so the task would
+  // Without a scheduled_date there is no anchor to advance from, so the task would
   // complete once and never come back.
-  it('rejects a recurring task that has no due_date', async () => {
+  it('rejects a recurring task that has no scheduled_date', async () => {
     const response = await app.request(
       '/api/tasks',
       {
@@ -147,7 +148,29 @@ describe('API safety boundaries', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: REPEAT_DUE_DATE_ERROR });
+    expect(await response.json()).toEqual({
+      error: REPEAT_SCHEDULED_DATE_ERROR,
+    });
+  });
+
+  it('rejects deadline fields on a recurring task instead of treating them as its start', async () => {
+    const response = await app.request(
+      '/api/tasks',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'ゴミ出し',
+          due_date: '2026-08-10',
+          scheduled_date: '2026-08-10',
+          repeat_rule: 'daily',
+        }),
+      },
+      env(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: REPEAT_DEADLINE_ERROR });
   });
 
   // These are plain bad requests, not races. Letting them fall through to the
@@ -160,7 +183,7 @@ describe('API safety boundaries', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'ゴミ出し',
-          due_date: '2026-08-10',
+          scheduled_date: '2026-08-10',
           repeat_rule: 'daily',
           status: 'done',
         }),
@@ -175,8 +198,10 @@ describe('API safety boundaries', () => {
       title: 'ゴミ出し',
       note: '',
       status: 'done' as const,
-      due_date: '2026-08-10',
+      due_date: null,
       due_time: null,
+      scheduled_date: '2026-08-10',
+      scheduled_time: null,
       priority: 0,
       tags: '',
       repeat_rule: null,
@@ -219,7 +244,7 @@ describe('API safety boundaries', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'ゴミ出し',
-          due_date: '2026-08-10',
+          scheduled_date: '2026-08-10',
           repeat_rule: 'daily',
         }),
       },
@@ -248,8 +273,10 @@ describe('API safety boundaries', () => {
       title: 'ゴミ出し',
       note: '',
       status: 'open' as const,
-      due_date: '2026-08-10',
+      due_date: null,
       due_time: null,
+      scheduled_date: '2026-08-10',
+      scheduled_time: null,
       priority: 0,
       tags: '',
       repeat_rule: 'daily',
@@ -282,14 +309,16 @@ describe('API safety boundaries', () => {
     expect(response.status).toBe(409);
   });
 
-  it('rejects clearing the due_date of an existing recurring task', async () => {
+  it('rejects clearing the scheduled_date of an existing recurring task', async () => {
     const stored = {
       id: 1,
       title: 'ゴミ出し',
       note: '',
       status: 'open' as const,
-      due_date: '2026-08-10',
+      due_date: null,
       due_time: null,
+      scheduled_date: '2026-08-10',
+      scheduled_time: null,
       priority: 0,
       tags: '',
       repeat_rule: 'daily',
@@ -303,7 +332,7 @@ describe('API safety boundaries', () => {
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ due_date: null }),
+        body: JSON.stringify({ scheduled_date: null }),
       },
       env({
         DB: {
@@ -319,7 +348,9 @@ describe('API safety boundaries', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: REPEAT_DUE_DATE_ERROR });
+    expect(await response.json()).toEqual({
+      error: REPEAT_SCHEDULED_DATE_ERROR,
+    });
   });
 
   it('returns 409 when a recurring completion loses to a concurrent edit', async () => {
@@ -328,8 +359,10 @@ describe('API safety boundaries', () => {
       title: 'ゴミ出し',
       note: '',
       status: 'open' as const,
-      due_date: '2026-08-01',
+      due_date: null,
       due_time: null,
+      scheduled_date: '2026-08-01',
+      scheduled_time: null,
       priority: 0,
       tags: '',
       repeat_rule: 'daily',
@@ -378,8 +411,10 @@ describe('API safety boundaries', () => {
       title: 'ゴミ出し',
       note: '',
       status: 'done' as const,
-      due_date: '2026-08-01',
+      due_date: null,
       due_time: null,
+      scheduled_date: '2026-08-01',
+      scheduled_time: null,
       priority: 0,
       tags: '',
       repeat_rule: null,

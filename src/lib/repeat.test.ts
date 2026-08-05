@@ -67,7 +67,7 @@ describe('repeat rules', () => {
   it('stops advancing excessively old daily tasks', () => {
     expect(() => nextRepeatDate('daily', '0001-01-01', '2026-08-05')).toThrow(
       new RepeatRuleError(
-        '繰り返しの日付計算が上限を超えました。due_dateを新しくしてください',
+        '繰り返しの日付計算が上限を超えました。scheduled_dateを新しくしてください',
       ),
     );
   });

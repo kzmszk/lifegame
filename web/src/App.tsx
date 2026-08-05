@@ -112,6 +112,24 @@ function repeatRuleFor(value: RepeatFormValue): RepeatRule | null {
   return `every:${clampInteger(value.everyDays, 1, 366)}` as RepeatRule;
 }
 
+/** Recurrence operates on an execution schedule, never on a deadline. */
+function moveDeadlineToSchedule<
+  T extends Pick<
+    TaskDraft,
+    'due_date' | 'due_time' | 'scheduled_date' | 'scheduled_time'
+  >,
+>(value: T): T {
+  const hasSchedule =
+    value.scheduled_date !== null || value.scheduled_time !== null;
+  return {
+    ...value,
+    scheduled_date: hasSchedule ? value.scheduled_date : value.due_date,
+    scheduled_time: hasSchedule ? value.scheduled_time : value.due_time,
+    due_date: null,
+    due_time: null,
+  };
+}
+
 function isTaskView(value: string | null): value is TaskView {
   return value === 'today' || value === 'inbox' || value === 'all';
 }
@@ -243,7 +261,11 @@ export default function App() {
       // A stated time means an appointment, and recurrence needs a final chance
       // to correct natural-language parsing. Both branches stop for confirmation;
       // plain one-off tasks can still be added in one step.
-      if (parsed.due_time || parsed.repeat_rule !== null) {
+      if (
+        parsed.due_time ||
+        parsed.scheduled_time ||
+        parsed.repeat_rule !== null
+      ) {
         setDraft({ draft: parsed, source: 'text' });
         return;
       }
@@ -756,6 +778,8 @@ function TaskCard({
         <span className="task-title">{task.title}</span>
         {(task.due_date ||
           task.due_time ||
+          task.scheduled_date ||
+          task.scheduled_time ||
           task.priority === 1 ||
           task.tags ||
           task.repeat_rule !== null ||
@@ -763,8 +787,14 @@ function TaskCard({
           <span className="task-meta">
             {task.due_date && (
               <span className="due">
-                {task.due_date}
+                期限: {task.due_date}
                 {task.due_time ? ` ${task.due_time}` : ''}
+              </span>
+            )}
+            {task.scheduled_date && (
+              <span className="due">
+                実行: {task.scheduled_date}
+                {task.scheduled_time ? ` ${task.scheduled_time}` : ''}
               </span>
             )}
             {task.priority === 1 && <span className="priority">高</span>}
@@ -963,7 +993,14 @@ function formatConnectionDate(timestamp: number): string {
 
 type EditableTask = Pick<
   Task,
-  'title' | 'note' | 'due_date' | 'due_time' | 'priority' | 'tags'
+  | 'title'
+  | 'note'
+  | 'due_date'
+  | 'due_time'
+  | 'scheduled_date'
+  | 'scheduled_time'
+  | 'priority'
+  | 'tags'
 > & {
   repeat: RepeatFormValue;
 };
@@ -974,6 +1011,8 @@ function editableTask(task: Task): EditableTask {
     note: task.note,
     due_date: task.due_date,
     due_time: task.due_time,
+    scheduled_date: task.scheduled_date,
+    scheduled_time: task.scheduled_time,
     priority: task.priority,
     tags: task.tags,
     repeat: repeatFormValue(task.repeat_rule),
@@ -1048,11 +1087,24 @@ function TaskDetail({
     key: K,
     value: EditableTask[K],
   ) => setForm((current) => (current ? { ...current, [key]: value } : current));
-  const missingRepeatDueDate =
-    repeatRuleFor(form.repeat) !== null && form.due_date === null;
+  const isRecurring = repeatRuleFor(form.repeat) !== null;
+  const missingRepeatScheduledDate =
+    isRecurring && form.scheduled_date === null;
+  const changeRepeat = (next: RepeatFormValue) => {
+    setForm((current) => {
+      if (!current) return current;
+      const wasRecurring = repeatRuleFor(current.repeat) !== null;
+      const nextForm = { ...current, repeat: next };
+      // Turning recurrence on is an explicit conversion: the old deadline is
+      // moved to the occurrence schedule and cleared, never reinterpreted.
+      return !wasRecurring && repeatRuleFor(next) !== null
+        ? moveDeadlineToSchedule(nextForm)
+        : nextForm;
+    });
+  };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!form.title.trim() || missingRepeatDueDate || saving) return;
+    if (!form.title.trim() || missingRepeatScheduledDate || saving) return;
     setSaving(true);
     try {
       const { repeat, ...fields } = form;
@@ -1144,35 +1196,61 @@ function TaskDetail({
             placeholder="補足を書いておく"
           />
         </label>
-        <div className="form-row">
-          <label>
-            <span>期限</span>
-            <input
-              type="date"
-              value={form.due_date ?? ''}
-              onChange={(event) =>
-                setField('due_date', event.target.value || null)
-              }
-            />
-          </label>
-          <label>
-            <span>時刻</span>
-            <input
-              type="time"
-              value={form.due_time ?? ''}
-              onChange={(event) =>
-                setField('due_time', event.target.value || null)
-              }
-            />
-          </label>
-        </div>
+        {!isRecurring && (
+          <div className="form-row">
+            <label>
+              <span>期限</span>
+              <input
+                type="date"
+                value={form.due_date ?? ''}
+                onChange={(event) =>
+                  setField('due_date', event.target.value || null)
+                }
+              />
+            </label>
+            <label>
+              <span>時刻</span>
+              <input
+                type="time"
+                value={form.due_time ?? ''}
+                onChange={(event) =>
+                  setField('due_time', event.target.value || null)
+                }
+              />
+            </label>
+          </div>
+        )}
         <RepeatRuleFields
           value={form.repeat}
-          onChange={(repeat) => setField('repeat', repeat)}
+          onChange={changeRepeat}
           disabled={task.status === 'done'}
         />
-        {missingRepeatDueDate && (
-          <p className="draft-warning">繰り返しタスクには期限が必要です。</p>
+        {(isRecurring || form.scheduled_date || form.scheduled_time) && (
+          <div className="form-row">
+            <label>
+              <span>{isRecurring ? '今回の実行日' : '実行予定日'}</span>
+              <input
+                type="date"
+                value={form.scheduled_date ?? ''}
+                onChange={(event) =>
+                  setField('scheduled_date', event.target.value || null)
+                }
+              />
+            </label>
+            <label>
+              <span>{isRecurring ? '今回の実行時刻' : '実行予定時刻'}</span>
+              <input
+                type="time"
+                value={form.scheduled_time ?? ''}
+                onChange={(event) =>
+                  setField('scheduled_time', event.target.value || null)
+                }
+              />
+            </label>
+          </div>
+        )}
+        {missingRepeatScheduledDate && (
+          <p className="draft-warning">繰り返しタスクには実行日が必要です。</p>
         )}
         {task.status === 'done' && (
           <p className="repeat-help">
@@ -1199,7 +1277,7 @@ function TaskDetail({
         </label>
         <button
           className="button primary save-button"
-          disabled={saving || missingRepeatDueDate}
+          disabled={saving || missingRepeatScheduledDate}
         >
           {saving ? '保存中…' : '変更を保存'}
         </button>
@@ -1238,14 +1316,18 @@ function DraftDialog({
     setValue((current) => ({ ...current, [key]: next }));
   const isRecurring = repeat.frequency !== 'none';
   const setRepeatValue = (next: RepeatFormValue) => {
+    const wasRecurring = repeat.frequency !== 'none';
     setRepeat(next);
-    if (next.frequency !== 'none') setKind('task');
+    if (next.frequency !== 'none') {
+      if (!wasRecurring) setValue((current) => moveDeadlineToSchedule(current));
+      setKind('task');
+    }
   };
   const incompleteEvent =
     kind === 'event' && (!value.due_date || !value.due_time);
-  const missingRepeatDueDate =
-    kind === 'task' && isRecurring && !value.due_date;
-  const incomplete = incompleteEvent || missingRepeatDueDate;
+  const missingRepeatScheduledDate =
+    kind === 'task' && isRecurring && !value.scheduled_date;
+  const incomplete = incompleteEvent || missingRepeatScheduledDate;
   const confirm = async () => {
     if (!value.title.trim() || incomplete || savingRef.current) return;
     savingRef.current = true;
@@ -1320,29 +1402,81 @@ function DraftDialog({
         </label>
         <div className="form-row">
           <label>
-            <span>{kind === 'event' ? '日付' : '期限'}</span>
+            <span>
+              {kind === 'event'
+                ? '日付'
+                : isRecurring
+                  ? '初回の実行日'
+                  : '期限'}
+            </span>
             <input
               type="date"
-              value={value.due_date ?? ''}
-              onChange={(event) => set('due_date', event.target.value || null)}
+              value={
+                (isRecurring ? value.scheduled_date : value.due_date) ?? ''
+              }
+              onChange={(event) =>
+                set(
+                  isRecurring ? 'scheduled_date' : 'due_date',
+                  event.target.value || null,
+                )
+              }
             />
           </label>
           <label>
-            <span>{kind === 'event' ? '開始時刻' : '時刻'}</span>
+            <span>
+              {kind === 'event'
+                ? '開始時刻'
+                : isRecurring
+                  ? '初回の実行時刻'
+                  : '時刻'}
+            </span>
             <input
               type="time"
-              value={value.due_time ?? ''}
-              onChange={(event) => set('due_time', event.target.value || null)}
+              value={
+                (isRecurring ? value.scheduled_time : value.due_time) ?? ''
+              }
+              onChange={(event) =>
+                set(
+                  isRecurring ? 'scheduled_time' : 'due_time',
+                  event.target.value || null,
+                )
+              }
             />
           </label>
         </div>
+        {kind === 'task' &&
+          !isRecurring &&
+          (value.scheduled_date || value.scheduled_time) && (
+            <div className="form-row">
+              <label>
+                <span>実行予定日</span>
+                <input
+                  type="date"
+                  value={value.scheduled_date ?? ''}
+                  onChange={(event) =>
+                    set('scheduled_date', event.target.value || null)
+                  }
+                />
+              </label>
+              <label>
+                <span>実行予定時刻</span>
+                <input
+                  type="time"
+                  value={value.scheduled_time ?? ''}
+                  onChange={(event) =>
+                    set('scheduled_time', event.target.value || null)
+                  }
+                />
+              </label>
+            </div>
+          )}
         {incompleteEvent && (
           <p className="draft-warning">
             予定にするには日付と時刻の両方が必要です。
           </p>
         )}
-        {missingRepeatDueDate && (
-          <p className="draft-warning">繰り返しタスクには期限が必要です。</p>
+        {missingRepeatScheduledDate && (
+          <p className="draft-warning">繰り返しタスクには実行日が必要です。</p>
         )}
         {kind === 'task' && (
           <RepeatRuleFields

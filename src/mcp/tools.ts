@@ -12,6 +12,7 @@ import { fieldsFromBody, validateFields } from '../lib/task-validation';
 import {
   normalizeRepeatRule,
   RepeatRuleError,
+  validateScheduleState,
   validateRepeatState,
 } from '../lib/repeat';
 import { listCalendarEvents, listHolidays } from '../lib/google-calendar';
@@ -23,6 +24,9 @@ export interface DailySummary {
   open_tasks: Task[];
   overdue_tasks: Task[];
   due_today_tasks: Task[];
+  /** Execution schedules are deliberately separate from deadlines. */
+  scheduled_overdue_tasks: Task[];
+  scheduled_today_tasks: Task[];
   inbox_count: number;
   completed_today_tasks: Task[];
   /**
@@ -133,6 +137,13 @@ export async function getDailySummary(
       (task) => task.due_date !== null && task.due_date < bounds.today,
     ),
     due_today_tasks: openTasks.filter((task) => task.due_date === bounds.today),
+    scheduled_overdue_tasks: openTasks.filter(
+      (task) =>
+        task.scheduled_date !== null && task.scheduled_date < bounds.today,
+    ),
+    scheduled_today_tasks: openTasks.filter(
+      (task) => task.scheduled_date === bounds.today,
+    ),
     inbox_count: inboxTasks.length,
     completed_today_tasks: completedTodayTasks,
     ...(includeCalendar
@@ -179,14 +190,25 @@ export async function createTaskForMcp(
     note: typeof body.note === 'string' ? body.note : '',
     due_date: typeof body.due_date === 'string' ? body.due_date : null,
     due_time: typeof body.due_time === 'string' ? body.due_time : null,
+    scheduled_date:
+      typeof body.scheduled_date === 'string' ? body.scheduled_date : null,
+    scheduled_time:
+      typeof body.scheduled_time === 'string' ? body.scheduled_time : null,
     priority: typeof body.priority === 'number' ? body.priority : 0,
     tags: typeof body.tags === 'string' ? body.tags : '',
     repeat_rule: normalizeRepeatRule(body.repeat_rule) ?? null,
   };
+  const scheduleError = validateScheduleState(
+    createInput.scheduled_date ?? null,
+    createInput.scheduled_time ?? null,
+  );
+  if (scheduleError) throw new McpToolError(scheduleError);
   const repeatError = validateRepeatState(
     createInput.repeat_rule ?? null,
     typeof body.status === 'string' && body.status === 'done' ? 'done' : 'open',
+    createInput.scheduled_date ?? null,
     createInput.due_date ?? null,
+    createInput.due_time ?? null,
   );
   if (repeatError) throw new McpToolError(repeatError);
   try {

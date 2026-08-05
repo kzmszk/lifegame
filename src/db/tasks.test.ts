@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { TaskConflictError, updateTask } from './tasks';
+import { listTasks, TaskConflictError, updateTask } from './tasks';
 
 interface Row {
   id: number;
@@ -9,6 +9,8 @@ interface Row {
   status: 'open' | 'done';
   due_date: string | null;
   due_time: string | null;
+  scheduled_date: string | null;
+  scheduled_time: string | null;
   priority: number;
   tags: string;
   repeat_rule: string | null;
@@ -24,8 +26,10 @@ function row(overrides: Partial<Row> = {}): Row {
     title: '定期タスク',
     note: 'メモ',
     status: 'open',
-    due_date: '2099-01-01',
-    due_time: '09:30',
+    due_date: null,
+    due_time: null,
+    scheduled_date: '2099-01-01',
+    scheduled_time: '09:30',
     priority: 1,
     tags: '仕事',
     repeat_rule: 'daily',
@@ -114,21 +118,23 @@ class FakeD1 {
       return [this.result(0), this.result(0), this.result(0)];
     }
     if (
-      sourceUpdate.sql.includes('due_date IS ?') &&
-      source.due_date !== sourceUpdate.bindings[guardIndex]
+      sourceUpdate.sql.includes('scheduled_date IS ?') &&
+      source.scheduled_date !== sourceUpdate.bindings[guardIndex]
     ) {
       return [this.result(0), this.result(0), this.result(0)];
     }
 
     this.applyUpdate(sourceUpdate, source);
-    const [nextDueDate, nextRule] = statements[1].bindings;
+    const [nextScheduledDate, nextRule] = statements[1].bindings;
     const childId = Math.max(...this.rows.map((candidate) => candidate.id)) + 1;
     this.rows.push(
       row({
         ...source,
         id: childId,
         status: 'open',
-        due_date: String(nextDueDate),
+        due_date: null,
+        due_time: null,
+        scheduled_date: String(nextScheduledDate),
         repeat_rule: String(nextRule),
         repeat_child_id: null,
         completed_at: null,
@@ -201,8 +207,10 @@ describe('recurring task persistence', () => {
       title: '定期タスク',
       note: 'メモ',
       status: 'open',
-      due_date: '2099-01-02',
-      due_time: '09:30',
+      due_date: null,
+      due_time: null,
+      scheduled_date: '2099-01-02',
+      scheduled_time: '09:30',
       priority: 1,
       tags: '仕事',
       repeat_rule: 'daily',
@@ -276,11 +284,42 @@ describe('recurring task persistence', () => {
 
   it('reports a conflict when the row is still open after the guard fails', async () => {
     const database = new FakeD1([row()], () => {
-      database.rows[0].due_date = '2099-01-02';
+      database.rows[0].scheduled_date = '2099-01-02';
     });
 
     await expect(
       updateTask(database as unknown as D1Database, 1, { status: 'done' }),
     ).rejects.toThrow(TaskConflictError);
+  });
+});
+
+describe('today task ordering query', () => {
+  it('uses the earliest non-null time when deadline and schedule share a date', async () => {
+    let sql = '';
+    const database = {
+      prepare(statement: string) {
+        sql = statement;
+        return {
+          bind: () => ({ all: async () => ({ results: [] }) }),
+        };
+      },
+    } as unknown as D1Database;
+
+    await listTasks(
+      database,
+      'today',
+      '2026-08-05',
+      '2026-08-04 15:00:00',
+      '2026-08-05 15:00:00',
+    );
+
+    // With matching dates, a deadline at 20:00 and a schedule at 09:00 must
+    // order as 09:00; an absent deadline time must likewise not hide 09:00.
+    expect(sql).toContain('WHEN due_date < scheduled_date THEN due_time');
+    expect(sql).toContain('WHEN scheduled_date < due_date THEN scheduled_time');
+    expect(sql).toContain('WHEN due_time IS NULL THEN scheduled_time');
+    expect(sql).toContain('WHEN scheduled_time IS NULL THEN due_time');
+    expect(sql).toContain('WHEN due_time <= scheduled_time THEN due_time');
+    expect(sql).not.toContain('WHEN due_date <= scheduled_date THEN due_time');
   });
 });

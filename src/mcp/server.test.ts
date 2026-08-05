@@ -87,6 +87,8 @@ describe('MCP tool registration', () => {
       status: 'open' as const,
       due_date: '2026-08-03',
       due_time: '09:30',
+      scheduled_date: null,
+      scheduled_time: null,
       priority: 0,
       tags: '秘密',
       repeat_rule: null,
