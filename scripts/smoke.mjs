@@ -25,6 +25,21 @@ const checks = [
   },
   { path: '/register', expect: 405, why: 'Bypass 済み。DCR は POST のみ' },
   {
+    // 中身が空なので 400 が返る。302 でなければ Worker に届いている証拠。
+    // ここが Access に吸われると、クライアントはコード交換も refresh もできない。
+    path: '/token',
+    method: 'POST',
+    expect: 400,
+    why: 'Bypass 済み。OAuth のコード交換と refresh の入口',
+  },
+  {
+    // Bypass に入れてはいけない唯一のパス。クライアント登録は誰でもできるが、
+    // 認可を承認できるのは Access を通った自分だけ、という設計の要になっている。
+    path: '/authorize',
+    expect: 302,
+    why: 'Access の内側のまま。ここが 400 なら誰でも承認できる',
+  },
+  {
     path: '/csp-report',
     method: 'POST',
     expect: 204,
