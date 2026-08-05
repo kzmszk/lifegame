@@ -5,8 +5,11 @@ export type RepeatRule =
   | `every:${number}`;
 
 export const REPEAT_RULE_ERROR =
-  'repeat_rule は daily、weekly:曜日、monthly:日、every:日数の形式で指定してください';
+  'repeat_rule は daily、weekly:曜日、monthly:日、every:日数(1〜366)の形式で指定してください';
 export const REPEAT_DUE_DATE_ERROR = '繰り返しタスクには due_date が必要です';
+
+const MAX_REPEAT_YEAR = 9999;
+const MAX_ADVANCE_ITERATIONS = 10_000;
 
 export class RepeatRuleError extends Error {
   constructor(message: string) {
@@ -38,6 +41,12 @@ function dateValue(year: number, month: number, day: number): Date {
 }
 
 function formatDate(value: Date): string {
+  const year = value.getUTCFullYear();
+  if (!Number.isFinite(year) || year < 0 || year > MAX_REPEAT_YEAR) {
+    throw new RepeatRuleError(
+      '繰り返しの次回日付が対応範囲(9999年まで)を超えます',
+    );
+  }
   return `${value.getUTCFullYear().toString().padStart(4, '0')}-${(value.getUTCMonth() + 1).toString().padStart(2, '0')}-${value
     .getUTCDate()
     .toString()
@@ -71,7 +80,7 @@ function isEveryRule(value: string): boolean {
   const match = value.match(/^every:(\d+)$/);
   if (!match) return false;
   const days = Number(match[1]);
-  return Number.isSafeInteger(days) && days > 0;
+  return Number.isSafeInteger(days) && days >= 1 && days <= 366;
 }
 
 export function isValidRepeatRule(value: unknown): value is RepeatRule {
@@ -169,6 +178,15 @@ export function nextRepeatDate(
   }
 
   let next = nextAfter(rule, dueDate);
-  while (next <= today) next = nextAfter(rule, next);
+  let iterations = 1;
+  while (next <= today) {
+    if (iterations >= MAX_ADVANCE_ITERATIONS) {
+      throw new RepeatRuleError(
+        '繰り返しの日付計算が上限を超えました。due_dateを新しくしてください',
+      );
+    }
+    next = nextAfter(rule, next);
+    iterations += 1;
+  }
   return next;
 }

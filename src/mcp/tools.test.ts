@@ -189,12 +189,24 @@ class FakeStatement {
 class FakeD1 {
   rows: Row[];
 
-  constructor(rows: Row[]) {
+  constructor(
+    rows: Row[],
+    private readonly beforeBatch?: () => void,
+  ) {
     this.rows = rows;
   }
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
+  }
+
+  async batch(): Promise<FakeResult<unknown>[]> {
+    this.beforeBatch?.();
+    return [0, 0, 0].map(() => ({
+      results: [],
+      success: true as const,
+      meta: { changes: 0 },
+    }));
   }
 }
 
@@ -368,6 +380,22 @@ describe('MCP tool handlers', () => {
     const reopened = await updateTaskForMcp(db, 1, { status: 'open' });
     expect(reopened.status).toBe('open');
     expect(reopened.completed_at).toBeNull();
+  });
+
+  it('maps a recurring-task conflict to McpToolError', async () => {
+    const db = new FakeD1([
+      row({
+        id: 1,
+        due_date: '2026-08-01',
+        repeat_rule: 'daily',
+      }),
+    ]) as unknown as D1Database;
+
+    await expect(updateTaskForMcp(db, 1, { status: 'done' })).rejects.toThrow(
+      new McpToolError(
+        'タスクが別の更新と競合しました。最新の内容を確認してからもう一度お試しください',
+      ),
+    );
   });
 
   it('reports delete and update not-found cases and invalid IDs', async () => {

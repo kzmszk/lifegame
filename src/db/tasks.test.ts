@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { updateTask } from './tasks';
+import { TaskConflictError, updateTask } from './tasks';
 
 interface Row {
   id: number;
@@ -80,20 +80,41 @@ class FakeStatement {
 }
 
 class FakeD1 {
-  constructor(public readonly rows: Row[]) {}
+  constructor(
+    public readonly rows: Row[],
+    private readonly beforeBatch?: () => void,
+  ) {}
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
   }
 
   async batch(statements: FakeStatement[]): Promise<Result[]> {
+    this.beforeBatch?.();
     const sourceUpdate = statements[0];
-    const sourceId = Number(sourceUpdate.bindings.at(-1));
+    const setPart =
+      sourceUpdate.sql.match(/UPDATE tasks SET (.+?)\s+WHERE/s)?.[1] ?? '';
+    const setBindingCount = (setPart.match(/\?/g) ?? []).length;
+    const sourceId = Number(sourceUpdate.bindings[setBindingCount]);
     const source = this.rows.find((candidate) => candidate.id === sourceId);
     if (
       !source ||
       source.status !== 'open' ||
       source.repeat_child_id !== null
+    ) {
+      return [this.result(0), this.result(0), this.result(0)];
+    }
+
+    let guardIndex = setBindingCount + 1;
+    if (
+      sourceUpdate.sql.includes('repeat_rule IS ?') &&
+      source.repeat_rule !== sourceUpdate.bindings[guardIndex++]
+    ) {
+      return [this.result(0), this.result(0), this.result(0)];
+    }
+    if (
+      sourceUpdate.sql.includes('due_date IS ?') &&
+      source.due_date !== sourceUpdate.bindings[guardIndex]
     ) {
       return [this.result(0), this.result(0), this.result(0)];
     }
@@ -194,5 +215,51 @@ describe('recurring task persistence', () => {
 
     expect(database.rows).toHaveLength(2);
     expect(completedAgain?.repeat_child_id).toBe(2);
+  });
+
+  it('allows replacing repeat_rule while completing the task', async () => {
+    const database = new FakeD1([row()]);
+
+    const task = await updateTask(database as unknown as D1Database, 1, {
+      repeat_rule: 'weekly:1',
+      status: 'done',
+    });
+
+    expect(task).toMatchObject({
+      status: 'done',
+      repeat_rule: 'weekly:1',
+      repeat_child_id: 2,
+    });
+    expect(database.rows[1]).toMatchObject({
+      repeat_rule: 'weekly:1',
+      status: 'open',
+    });
+  });
+
+  it('returns the completed row when a concurrent completion already won', async () => {
+    const database = new FakeD1([row()], () => {
+      database.rows[0].status = 'done';
+      database.rows[0].repeat_child_id = 2;
+    });
+
+    const task = await updateTask(database as unknown as D1Database, 1, {
+      status: 'done',
+    });
+
+    expect(task).toMatchObject({
+      id: 1,
+      status: 'done',
+      repeat_child_id: 2,
+    });
+  });
+
+  it('reports a conflict when the row is still open after the guard fails', async () => {
+    const database = new FakeD1([row()], () => {
+      database.rows[0].due_date = '2099-01-02';
+    });
+
+    await expect(
+      updateTask(database as unknown as D1Database, 1, { status: 'done' }),
+    ).rejects.toThrow(TaskConflictError);
   });
 });

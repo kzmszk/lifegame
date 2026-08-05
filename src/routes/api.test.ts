@@ -186,6 +186,54 @@ describe('API safety boundaries', () => {
     expect(await response.json()).toEqual({ error: REPEAT_DUE_DATE_ERROR });
   });
 
+  it('returns 409 when a recurring completion loses to a concurrent edit', async () => {
+    const stored = {
+      id: 1,
+      title: 'ゴミ出し',
+      note: '',
+      status: 'open' as const,
+      due_date: '2026-08-01',
+      due_time: null,
+      priority: 0,
+      tags: '',
+      repeat_rule: 'daily',
+      repeat_child_id: null,
+      created_at: '2026-08-01 00:00:00',
+      updated_at: '2026-08-01 00:00:00',
+      completed_at: null,
+    };
+    const response = await app.request(
+      '/api/tasks/1',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'done' }),
+      },
+      env({
+        DB: {
+          prepare: () => ({
+            bind: () => ({
+              first: async () => stored,
+              run: async () => ({ success: true, meta: { changes: 1 } }),
+            }),
+          }),
+          batch: async () =>
+            [0, 0, 0].map(() => ({
+              success: true,
+              results: [],
+              meta: { changes: 0 },
+            })),
+        } as unknown as D1Database,
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error:
+        'タスクが別の更新と競合しました。最新の内容を確認してからもう一度お試しください',
+    });
+  });
+
   it('requires an allowlisted email when authentication is enabled', async () => {
     const response = await app.request(
       '/api/tasks',

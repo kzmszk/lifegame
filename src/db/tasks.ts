@@ -14,6 +14,15 @@ import { tokyoToday } from '../lib/time';
 
 export type TaskView = 'today' | 'inbox' | 'all';
 
+export class TaskConflictError extends Error {
+  constructor(
+    message = 'タスクが別の更新と競合しました。最新の内容を確認してからもう一度お試しください',
+  ) {
+    super(message);
+    this.name = 'TaskConflictError';
+  }
+}
+
 interface TaskRow {
   id: number;
   title: string;
@@ -184,13 +193,26 @@ export async function updateTask(
     const nextDueDate = nextRepeatDate(finalRule, finalDueDate, tokyoToday());
     const sourceUpdate = `${updates.join(', ')}, repeat_child_id = -1,
       updated_at = datetime('now')`;
+    const sourceWhere = [
+      'id = ?',
+      "status = 'open'",
+      'repeat_child_id IS NULL',
+      ...(input.repeat_rule === undefined ? ['repeat_rule IS ?'] : []),
+      ...(input.due_date === undefined ? ['due_date IS ?'] : []),
+    ].join(' AND ');
+    const sourceBindings: Array<string | number | null> = [
+      ...bindings,
+      id,
+      ...(input.repeat_rule === undefined ? [current.repeat_rule] : []),
+      ...(input.due_date === undefined ? [current.due_date] : []),
+    ];
     const statements = [
       db
         .prepare(
           `UPDATE tasks SET ${sourceUpdate}
-          WHERE id = ? AND status = 'open' AND repeat_child_id IS NULL`,
+          WHERE ${sourceWhere}`,
         )
-        .bind(...bindings, id),
+        .bind(...sourceBindings),
       db
         .prepare(
           `INSERT INTO tasks
@@ -209,7 +231,12 @@ export async function updateTask(
         .bind(id),
     ];
     const results = await db.batch(statements);
-    if (!results[0]?.success || results[0].meta.changes === 0) return null;
+    if (!results[0]?.success) return null;
+    if (results[0].meta.changes === 0) {
+      const latest = await getTask(db, id);
+      if (!latest || latest.status === 'done') return latest;
+      throw new TaskConflictError();
+    }
     if (!results[1]?.success || results[1].meta.changes === 0)
       throw new Error('繰り返しタスクの次回生成に失敗しました');
     if (!results[2]?.success || results[2].meta.changes === 0)

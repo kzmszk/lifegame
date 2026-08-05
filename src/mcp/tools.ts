@@ -3,6 +3,7 @@ import {
   createTask,
   deleteTask,
   listTasks,
+  TaskConflictError,
   updateTask,
   type TaskView,
 } from '../db/tasks';
@@ -203,6 +204,8 @@ export async function updateTaskForMcp(
     task = await updateTask(db, id, fieldsFromBody(body));
   } catch (thrown) {
     if (thrown instanceof RepeatRuleError)
+      throw new McpToolError(thrown.message);
+    if (thrown instanceof TaskConflictError)
       throw new McpToolError(thrown.message);
     throw thrown;
   }

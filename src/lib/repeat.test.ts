@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isValidRepeatRule,
   nextRepeatDate,
+  RepeatRuleError,
   validateRepeatRule,
 } from './repeat';
 
@@ -20,6 +21,7 @@ describe('repeat rules', () => {
       'monthly:0',
       'monthly:32',
       'every:0',
+      'every:367',
       'every:-1',
     ]) {
       expect(isValidRepeatRule(rule)).toBe(false);
@@ -28,6 +30,8 @@ describe('repeat rules', () => {
 
     expect(validateRepeatRule(null)).toBeNull();
     expect(validateRepeatRule('')).toBeNull();
+    expect(isValidRepeatRule('every:1')).toBe(true);
+    expect(isValidRepeatRule('every:366')).toBe(true);
   });
 
   it('calculates daily, weekly, and every-N-day occurrences', () => {
@@ -51,6 +55,20 @@ describe('repeat rules', () => {
     );
     expect(nextRepeatDate('monthly:31', '2026-01-31', '2026-03-30')).toBe(
       '2026-03-31',
+    );
+  });
+
+  it('rejects repeat dates that leave the supported year range', () => {
+    expect(() => nextRepeatDate('daily', '9999-12-31', '9999-12-31')).toThrow(
+      new RepeatRuleError('繰り返しの次回日付が対応範囲(9999年まで)を超えます'),
+    );
+  });
+
+  it('stops advancing excessively old daily tasks', () => {
+    expect(() => nextRepeatDate('daily', '0001-01-01', '2026-08-05')).toThrow(
+      new RepeatRuleError(
+        '繰り返しの日付計算が上限を超えました。due_dateを新しくしてください',
+      ),
     );
   });
 });

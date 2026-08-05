@@ -6,6 +6,7 @@ import {
   deleteTask,
   getTask,
   listTasks,
+  TaskConflictError,
   updateTask,
   type TaskView,
 } from '../db/tasks';
@@ -51,7 +52,7 @@ const MAX_GRANT_ID_LENGTH = 256;
 function error(
   c: Context<{ Bindings: Env }>,
   message: string,
-  status: 400 | 401 | 403 | 404 | 405 | 500 | 502,
+  status: 400 | 401 | 403 | 404 | 405 | 409 | 500 | 502,
 ) {
   return c.json<ErrorResponse>({ error: message }, status);
 }
@@ -185,6 +186,8 @@ api.patch('/tasks/:id', async (c) => {
     return task ? c.json({ task }) : error(c, 'タスクが見つかりません', 404);
   } catch (thrown) {
     if (thrown instanceof RepeatRuleError) return error(c, thrown.message, 400);
+    if (thrown instanceof TaskConflictError)
+      return error(c, thrown.message, 409);
     throw thrown;
   }
 });
