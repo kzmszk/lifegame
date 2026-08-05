@@ -75,22 +75,62 @@ for (const check of checks) {
   }
 }
 
+// MCP クライアントは authorization-server より先に protected-resource の文書を読む。
+// その場所は /mcp の 401 が WWW-Authenticate で名指しするので、パスを決め打ちせず
+// 広告されたとおりに辿る。決め打ちだと、/.well-known/* の Bypass が1パスだけに
+// 狭められた場合に、こちらは通るのにクライアントは探索の入口で止まる。
+async function checkDiscovery() {
+  const challenge = (await status('/mcp', 'GET')).headers.get(
+    'www-authenticate',
+  );
+  const advertised = challenge?.match(/resource_metadata="([^"]+)"/)?.[1];
+  if (!advertised) {
+    failures += 1;
+    console.log('✗ /mcp が resource_metadata を広告していません');
+    return;
+  }
+  // ヘッダーの値をそのまま取りに行く前に、自分のホストであることを確かめる。
+  if (!advertised.startsWith(`${baseUrl}/`)) {
+    failures += 1;
+    console.log(`✗ resource_metadata が別ホストを指しています: ${advertised}`);
+    return;
+  }
+
+  const response = await fetch(advertised, { redirect: 'manual' });
+  if (response.status !== 200) {
+    failures += 1;
+    console.log(
+      `✗ ${advertised.slice(baseUrl.length)} ${response.status} (期待 200) — 探索の入口が Access に吸われている`,
+    );
+    return;
+  }
+  console.log(
+    `✓ ${advertised.slice(baseUrl.length).padEnd(44)} 200 (期待 200) — Bypass 済み。探索はここから始まる`,
+  );
+  return response.json();
+}
+
 // Access ではなくデプロイ内容の確認。広告するスコープが古いと、探索で繋ぐ
 // クライアントが calendar:read を要求できず、カレンダーが見えないままになる。
-try {
-  const metadata = await (
-    await status('/.well-known/oauth-authorization-server', 'GET')
-  ).json();
-  const scopes = metadata.scopes_supported ?? [];
+function checkScopes(label, scopes) {
   const missing = ['tasks:read', 'tasks:write', 'calendar:read'].filter(
-    (scope) => !scopes.includes(scope),
+    (scope) => !(scopes ?? []).includes(scope),
   );
   if (missing.length > 0) {
     failures += 1;
-    console.log(`✗ scopes_supported に不足: ${missing.join(', ')}`);
-  } else {
-    console.log(`✓ scopes_supported ${JSON.stringify(scopes)}`);
+    console.log(`✗ ${label} の scopes_supported に不足: ${missing.join(', ')}`);
+    return;
   }
+  console.log(`✓ ${label} の scopes_supported ${JSON.stringify(scopes)}`);
+}
+
+try {
+  const resource = await checkDiscovery();
+  if (resource) checkScopes('protected-resource', resource.scopes_supported);
+  const server = await (
+    await status('/.well-known/oauth-authorization-server', 'GET')
+  ).json();
+  checkScopes('authorization-server', server.scopes_supported);
 } catch (error) {
   failures += 1;
   console.log(`✗ OAuth メタデータを読めません — ${String(error)}`);
