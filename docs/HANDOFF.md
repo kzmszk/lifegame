@@ -323,6 +323,21 @@ DCR により Claude 側が自動で登録する。設定に必要なのはURL�
 
 - Codex ジョブは実行中に静かに死ぬことがある(statusは running のままプロセスだけ消える)。
   PID の生存確認で監視し、死んでいたら `cancel` してから `--resume-last` で再開する
+
+  **原因が分かった (2026-08-05)。`--background` を付けないと detach されない**。
+  付けたときだけ companion が `spawnDetachedTaskWorker`(`detached: true` + `unref()` +
+  `stdio: "ignore"`)を通り、ログの2行目に `Queued for background execution.` が出て
+  **PPID が 1** になる。付けないと `codex-companion.mjs → /bin/zsh → claude` の孫プロセスのままで、
+  親シェルが消えた瞬間に道連れになり、誰も status ファイルを更新しないので running のまま残る。
+  **サブエージェント(`codex:codex-rescue`)は `--background` を渡さない**ので、
+  委譲経由だけが死んで Bash から直叩きすると死なない、という食い違いが起きる。
+  一定時間で死ぬわけではない(実測 357秒 と 103秒)。103秒のほうは
+  サブエージェントをフォアグラウンドで起動して**2分のクライアント側 Bash タイムアウト**(exit 143)に
+  当たったもの。companion 自体にタイムアウトは無い
+  (`DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240000` は `status --wait` 専用)。
+  **対策**: `codex-companion.mjs task --background ...` を Bash から直接叩く。
+  サブエージェント経由にするなら `run_in_background: true` で起動する
+
 - GitHub の Codex ボットは、**指摘が無いとき PR 本文に `+1` リアクションを付けるだけ**で
   レビューもコメントも残さない。`gh pr view` の reviews/comments は空のままなので、
   `gh api repos/<owner>/<repo>/issues/<n>/reactions` を見ないとレビュー済みだと分からない。
