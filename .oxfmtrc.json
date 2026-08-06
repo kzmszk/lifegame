@@ -5,6 +5,8 @@
   "printWidth": 80,
   "sortPackageJson": false,
   "ignorePatterns": [
+    ".agents/skills/",
+    ".beads/",
     ".claude/",
     "coverage/",
     "dist/",
