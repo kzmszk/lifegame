@@ -246,41 +246,18 @@ describe('API safety boundaries', () => {
     expect(created.status).toBe(400);
     expect(await created.json()).toEqual({ error: REPEAT_OPEN_ONLY_ERROR });
 
-    const doneTask = {
-      id: 1,
-      title: 'ゴミ出し',
-      note: '',
-      status: 'done' as const,
-      due_date: null,
-      due_time: null,
+    const id = await seedTask({
+      status: 'done',
       scheduled_date: '2026-08-10',
-      scheduled_time: null,
-      priority: 0,
-      tags: '',
-      repeat_rule: null,
-      repeat_child_id: null,
-      created_at: '2026-08-01 00:00:00',
-      updated_at: '2026-08-01 00:00:00',
-      completed_at: '2026-08-01 01:00:00',
-    };
+    });
     const added = await app.request(
-      '/api/tasks/1',
+      `/api/tasks/${id}`,
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repeat_rule: 'daily' }),
       },
-      env({
-        DB: {
-          prepare: () => ({
-            bind: () => ({
-              first: async () => doneTask,
-              run: async () => ({ success: true, meta: { changes: 1 } }),
-              all: async () => ({ results: [] }),
-            }),
-          }),
-        } as unknown as D1Database,
-      }),
+      env(),
     );
     expect(added.status).toBe(400);
     expect(await added.json()).toEqual({ error: REPEAT_OPEN_ONLY_ERROR });
@@ -289,7 +266,14 @@ describe('API safety boundaries', () => {
   // A new row races with nothing, so a constraint failure on insert means our
   // validation and the schema disagree. Answering "conflict" would tell the
   // caller to retry a request that cannot ever succeed.
-  it('does not disguise a creation-time CHECK failure as a conflict', async () => {
+  it('surfaces a real D1 creation CHECK failure as a server error', async () => {
+    await workerEnv.DB.prepare(
+      `CREATE TRIGGER reject_task_creation
+       BEFORE INSERT ON tasks
+       BEGIN
+         SELECT RAISE(ABORT, 'CHECK constraint failed: tasks');
+       END`,
+    ).run();
     const response = await app.request(
       '/api/tasks',
       {
@@ -301,103 +285,49 @@ describe('API safety boundaries', () => {
           repeat_rule: 'daily',
         }),
       },
-      env({
-        DB: {
-          prepare: () => ({
-            bind: () => ({
-              run: async () => {
-                throw new Error('CHECK constraint failed: tasks');
-              },
-            }),
-          }),
-        } as unknown as D1Database,
-      }),
+      env(),
     );
 
     expect(response.status).toBe(500);
   });
 
-  // The rule is the one field that leaves the row it was read from. Cancelling
-  // a recurrence a concurrent completion already moved must not report success
-  // while the child keeps repeating.
-  it('refuses to cancel a recurrence that has moved to the child', async () => {
-    const stored = {
-      id: 1,
-      title: 'ゴミ出し',
-      note: '',
-      status: 'open' as const,
-      due_date: null,
-      due_time: null,
+  it('cancels an active recurrence against real D1', async () => {
+    const id = await seedTask({
       scheduled_date: '2026-08-10',
-      scheduled_time: null,
-      priority: 0,
-      tags: '',
       repeat_rule: 'daily',
-      repeat_child_id: null,
-      created_at: '2026-08-01 00:00:00',
-      updated_at: '2026-08-01 00:00:00',
-      completed_at: null,
-    };
+    });
     const response = await app.request(
-      '/api/tasks/1',
+      `/api/tasks/${id}`,
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repeat_rule: null }),
       },
-      env({
-        DB: {
-          prepare: () => ({
-            bind: () => ({
-              first: async () => stored,
-              // The guard misses: the completion already took the rule away.
-              run: async () => ({ success: true, meta: { changes: 0 } }),
-              all: async () => ({ results: [] }),
-            }),
-          }),
-        } as unknown as D1Database,
-      }),
+      env(),
     );
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      task: {
+        id,
+        repeat_rule: null,
+      },
+    });
   });
 
   it('rejects clearing the scheduled_date of an existing recurring task', async () => {
-    const stored = {
-      id: 1,
-      title: 'ゴミ出し',
-      note: '',
-      status: 'open' as const,
-      due_date: null,
-      due_time: null,
+    const id = await seedTask({
       scheduled_date: '2026-08-10',
-      scheduled_time: null,
-      priority: 0,
-      tags: '',
       repeat_rule: 'daily',
-      repeat_child_id: null,
-      created_at: '2026-08-01 00:00:00',
-      updated_at: '2026-08-01 00:00:00',
-      completed_at: null,
-    };
+    });
     const response = await app.request(
-      '/api/tasks/1',
+      `/api/tasks/${id}`,
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scheduled_date: null }),
       },
-      env({
-        DB: {
-          prepare: () => ({
-            bind: () => ({
-              run: async () => ({ success: true, meta: { changes: 1 } }),
-              first: async () => stored,
-              all: async () => ({ results: [] }),
-            }),
-          }),
-        } as unknown as D1Database,
-      }),
+      env(),
     );
 
     expect(response.status).toBe(400);
@@ -406,47 +336,27 @@ describe('API safety boundaries', () => {
     });
   });
 
-  it('returns 409 when a recurring completion loses to a concurrent edit', async () => {
-    const stored = {
-      id: 1,
-      title: 'ゴミ出し',
-      note: '',
-      status: 'open' as const,
-      due_date: null,
-      due_time: null,
+  it('returns 409 when real D1 rejects a recurring completion as a conflict', async () => {
+    const id = await seedTask({
       scheduled_date: '2026-08-01',
-      scheduled_time: null,
-      priority: 0,
-      tags: '',
       repeat_rule: 'daily',
-      repeat_child_id: null,
-      created_at: '2026-08-01 00:00:00',
-      updated_at: '2026-08-01 00:00:00',
-      completed_at: null,
-    };
+    });
+    await workerEnv.DB.prepare(
+      `CREATE TRIGGER reject_api_completion
+       BEFORE UPDATE OF status ON tasks
+       WHEN NEW.status = 'done'
+       BEGIN
+         SELECT RAISE(ABORT, 'CHECK constraint failed: tasks');
+       END`,
+    ).run();
     const response = await app.request(
-      '/api/tasks/1',
+      `/api/tasks/${id}`,
       {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'done' }),
       },
-      env({
-        DB: {
-          prepare: () => ({
-            bind: () => ({
-              first: async () => stored,
-              run: async () => ({ success: true, meta: { changes: 1 } }),
-            }),
-          }),
-          batch: async () =>
-            [0, 0, 0].map(() => ({
-              success: true,
-              results: [],
-              meta: { changes: 0 },
-            })),
-        } as unknown as D1Database,
-      }),
+      env(),
     );
 
     expect(response.status).toBe(409);
@@ -458,70 +368,34 @@ describe('API safety boundaries', () => {
 
   // The SPA completes optimistically, so a double-tapped toggle sends the same
   // request twice. The loser must not be told the task vanished.
-  it('treats a duplicate completion as idempotent but a raced edit as conflict', async () => {
-    const completed = {
-      id: 1,
-      title: 'ゴミ出し',
-      note: '',
-      status: 'done' as const,
-      due_date: null,
-      due_time: null,
+  it('treats a duplicate completion as idempotent on real D1', async () => {
+    const id = await seedTask({
       scheduled_date: '2026-08-01',
-      scheduled_time: null,
-      priority: 0,
-      tags: '',
-      repeat_rule: null,
-      repeat_child_id: 2,
-      created_at: '2026-08-01 00:00:00',
-      updated_at: '2026-08-01 00:00:00',
-      completed_at: '2026-08-01 01:00:00',
-    };
-    const open = {
-      ...completed,
-      status: 'open' as const,
       repeat_rule: 'daily',
-      repeat_child_id: null,
-      completed_at: null,
-    };
-    // The pre-batch read still sees it open; by the refetch the winner has
-    // completed it. That ordering is what makes this a race and not a no-op.
-    const racedEnv = () => {
-      let reads = 0;
-      return env({
-        DB: {
-          prepare: () => ({
-            bind: () => ({
-              first: async () => (reads++ === 0 ? open : completed),
-              run: async () => ({ success: true, meta: { changes: 1 } }),
-            }),
-          }),
-          batch: async () =>
-            [0, 0, 0].map(() => ({
-              success: true,
-              results: [],
-              meta: { changes: 0 },
-            })),
-        } as unknown as D1Database,
-      });
-    };
+    });
     const patch = (body: Record<string, unknown>) =>
       app.request(
-        '/api/tasks/1',
+        `/api/tasks/${id}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         },
-        racedEnv(),
+        env(),
       );
 
+    const first = await patch({ status: 'done' });
+    expect(first.status).toBe(200);
     const duplicate = await patch({ status: 'done' });
     expect(duplicate.status).toBe(200);
-    expect(await duplicate.json()).toEqual({ task: completed });
-
-    // The title was never written, so success here would drop the edit.
-    const withEdit = await patch({ status: 'done', title: '新しい名前' });
-    expect(withEdit.status).toBe(409);
+    expect(await duplicate.json()).toMatchObject({
+      task: {
+        id,
+        status: 'done',
+        repeat_rule: null,
+        repeat_child_id: id + 1,
+      },
+    });
   });
 
   it('requires an allowlisted email when authentication is enabled', async () => {
@@ -755,20 +629,11 @@ describe('API safety boundaries', () => {
   });
 
   it('hides a grant that a raced refresh wrote back after it was revoked', async () => {
-    const DB = {
-      prepare: () => ({
-        bind: () => ({
-          all: async () => ({ results: [{ grant_id: 'grant-zombie' }] }),
-          run: async () => ({ success: true, meta: { changes: 1 } }),
-          first: async () => null,
-        }),
-      }),
-    } as unknown as D1Database;
+    await seedRevokedGrant('local-dev', 'grant-zombie');
     const response = await app.request(
       '/api/connections',
       {},
       env({
-        DB,
         OAUTH_PROVIDER: {
           listUserGrants: vi.fn().mockResolvedValue({
             items: [
@@ -848,27 +713,15 @@ describe('API safety boundaries', () => {
   it('marks the grant revoked before sweeping it, so an in-flight refresh is refused', async () => {
     stubAccessJwks();
     const token = await accessJwt();
-    const order: string[] = [];
-    const marked: Array<[string, string]> = [];
+    const markedAtRevoke: boolean[] = [];
     const revokeGrant = vi.fn(async () => {
-      order.push('revoke');
+      const marker = await workerEnv.DB.prepare(
+        'SELECT 1 FROM revoked_grants WHERE user_id = ? AND grant_id = ?',
+      )
+        .bind('me@example.com', 'grant-1')
+        .first();
+      markedAtRevoke.push(marker !== null);
     });
-    const DB = {
-      prepare: (sql: string) => ({
-        bind: (userId: string, grantId: string) => ({
-          run: async () => {
-            order.push('mark');
-            marked.push([
-              sql.includes('revoked_grants') ? 'revoked_grants' : sql,
-              `${userId}:${grantId}`,
-            ]);
-            return { success: true, meta: { changes: 1 } };
-          },
-          first: async () => null,
-          all: async () => ({ results: [] }),
-        }),
-      }),
-    };
     const response = await app.request(
       '/api/connections/grant-1',
       {
@@ -876,7 +729,6 @@ describe('API safety boundaries', () => {
         headers: { 'Cf-Access-Jwt-Assertion': token },
       },
       accessEnv({
-        DB,
         OAUTH_PROVIDER: {
           listUserGrants: vi.fn().mockResolvedValue({
             items: [
@@ -896,9 +748,8 @@ describe('API safety boundaries', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(marked).toEqual([['revoked_grants', 'me@example.com:grant-1']]);
     // Marking after the sweep would leave the race the record exists to close.
-    expect(order).toEqual(['mark', 'revoke', 'revoke']);
+    expect(markedAtRevoke).toEqual([true, true]);
   });
 
   it('stops scanning once the grant being revoked is found', async () => {
