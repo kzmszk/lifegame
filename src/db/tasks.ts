@@ -368,6 +368,10 @@ export async function updateTask(
 }
 
 export async function deleteTask(db: D1Database, id: number): Promise<boolean> {
+  // repeat_child_id is a one-way history/display link from a completed
+  // occurrence to the next open occurrence. Deleting the parent removes the
+  // link with it; the child owns its repeat_rule and must remain independent so
+  // the series can continue. Deletion is intentionally limited to this row.
   const result = await db
     .prepare('DELETE FROM tasks WHERE id = ?')
     .bind(id)

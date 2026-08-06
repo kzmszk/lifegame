@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
-import { listTasks, TaskConflictError, updateTask } from './tasks';
+import { deleteTask, listTasks, TaskConflictError, updateTask } from './tasks';
 
 interface Row {
   id: number;
@@ -70,6 +70,15 @@ class FakeStatement {
   }
 
   async run(): Promise<Result> {
+    if (this.sql.startsWith('DELETE')) {
+      const id = Number(this.bindings[0]);
+      const index = this.database.rows.findIndex(
+        (candidate) => candidate.id === id,
+      );
+      if (index === -1) return this.database.result(0);
+      this.database.rows.splice(index, 1);
+      return this.database.result(1);
+    }
     if (this.sql.startsWith('UPDATE')) {
       // The id follows the SET bindings.
       const setPart =
@@ -290,6 +299,36 @@ describe('recurring task persistence', () => {
     await expect(
       updateTask(database as unknown as D1Database, 1, { status: 'done' }),
     ).rejects.toThrow(TaskConflictError);
+  });
+
+  it('keeps the next recurring task when its completed parent is deleted', async () => {
+    const database = new FakeD1([
+      row({
+        id: 1,
+        status: 'done',
+        repeat_rule: null,
+        repeat_child_id: 2,
+        completed_at: '2099-01-01 10:00:00',
+      }),
+      row({
+        id: 2,
+        scheduled_date: '2099-01-02',
+        created_at: '2099-01-01 10:00:00',
+        updated_at: '2099-01-01 10:00:00',
+      }),
+    ]);
+
+    const deleted = await deleteTask(database as unknown as D1Database, 1);
+
+    expect(deleted).toBe(true);
+    expect(database.rows).toHaveLength(1);
+    expect(database.rows[0]).toMatchObject({
+      id: 2,
+      status: 'open',
+      repeat_rule: 'daily',
+      repeat_child_id: null,
+      scheduled_date: '2099-01-02',
+    });
   });
 });
 
