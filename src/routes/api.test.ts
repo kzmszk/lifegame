@@ -1,4 +1,4 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import { env as workerEnv } from 'cloudflare:workers';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { app } from '../app';
@@ -11,19 +11,72 @@ import {
 
 function env(overrides: Record<string, unknown> = {}) {
   return {
-    DB: {
-      prepare: () => ({
-        bind: () => ({
-          run: async () => ({ success: true, meta: { changes: 1 } }),
-          first: async () => null,
-          all: async () => ({ results: [] }),
-        }),
-      }),
-    } as unknown as D1Database,
+    ...workerEnv,
     ASSETS: { fetch: vi.fn() },
     AUTH_REQUIRED: 'false',
     ...overrides,
   };
+}
+
+interface TaskSeed {
+  title?: string;
+  note?: string;
+  status?: 'open' | 'done';
+  due_date?: string | null;
+  due_time?: string | null;
+  scheduled_date?: string | null;
+  scheduled_time?: string | null;
+  priority?: number;
+  tags?: string;
+  repeat_rule?: string | null;
+}
+
+async function seedTask(overrides: TaskSeed = {}): Promise<number> {
+  const task = {
+    title: 'ゴミ出し',
+    note: '',
+    status: 'open' as const,
+    due_date: null,
+    due_time: null,
+    scheduled_date: null,
+    scheduled_time: null,
+    priority: 0,
+    tags: '',
+    repeat_rule: null as string | null,
+    ...overrides,
+  };
+  const result = await workerEnv.DB.prepare(
+    `INSERT INTO tasks
+      (title, note, status, due_date, due_time, scheduled_date, scheduled_time,
+       priority, tags, repeat_rule, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END)`,
+  )
+    .bind(
+      task.title,
+      task.note,
+      task.status,
+      task.due_date,
+      task.due_time,
+      task.scheduled_date,
+      task.scheduled_time,
+      task.priority,
+      task.tags,
+      task.repeat_rule,
+      task.status,
+    )
+    .run();
+  return Number(result.meta.last_row_id);
+}
+
+async function seedRevokedGrant(
+  userId: string,
+  grantId: string,
+): Promise<void> {
+  await workerEnv.DB.prepare(
+    'INSERT INTO revoked_grants (user_id, grant_id) VALUES (?, ?)',
+  )
+    .bind(userId, grantId)
+    .run();
 }
 
 const ACCESS_TEAM_DOMAIN = 'https://team.cloudflareaccess.com';
