@@ -17,14 +17,14 @@ Health Connectへの書き込み、履歴（30日より前）・バックグラ�
 3. Gradle Syncが完了するまで待ち、`app` の `debug` ビルドを選ぶ。
 4. メニューの **Build > Build Bundle(s) / APK(s) > Build APK(s)** を選ぶ。
 
-コマンドラインからGradleを用意している場合は、リポジトリのルートで次を実行します。
+Gradleを別途インストールせず、リポジトリに固定したGradle Wrapperで同じ検証を実行できます。リポジトリのルートから次を実行します。
 
 ```sh
-gradle -p android :app:testDebugUnitTest
-gradle -p android :app:assembleDebug
+cd android
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-生成物は `android/app/build/outputs/apk/debug/app-debug.apk` です。`android/` にはGradle wrapperを含めていないため、Android Studio同梱のGradleまたは互換性のあるGradle 8.9以上を使ってください。
+生成物は `android/app/build/outputs/apk/debug/app-debug.apk` です。`./gradlew` が実行できない場合は、ファイルの実行権限を確認してください。
 
 ## Android 16実機で確認する
 
