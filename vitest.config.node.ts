@@ -9,6 +9,7 @@ export default defineProject({
     exclude: [
       ...configDefaults.exclude,
       'e2e/**',
+      'src/db/migration-0004.test.ts',
       'src/db/tasks.test.ts',
       'src/routes/api.test.ts',
     ],

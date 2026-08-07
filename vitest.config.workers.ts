@@ -19,7 +19,11 @@ export default async function () {
     ],
     test: {
       name: 'workers',
-      include: ['src/db/tasks.test.ts', 'src/routes/api.test.ts'],
+      include: [
+        'src/db/migration-0004.test.ts',
+        'src/db/tasks.test.ts',
+        'src/routes/api.test.ts',
+      ],
       exclude: [...configDefaults.exclude, 'e2e/**'],
       setupFiles: ['./test/apply-migrations.ts'],
     },
