@@ -4,14 +4,11 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -30,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.health.connect.client.HealthConnectClient
@@ -38,8 +34,7 @@ import androidx.health.connect.client.PermissionController
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    private var screenState by mutableStateOf(HealthConnectScreenState(isRefreshing = true))
-    private var healthConnectClient: HealthConnectClient? = null
+    private var screenState by mutableStateOf(HealthConnectScreenState())
 
     private val permissionLauncher = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
@@ -74,9 +69,8 @@ class MainActivity : ComponentActivity() {
             val availability = HealthConnectClient.getSdkStatus(this@MainActivity)
             when (availability) {
                 HealthConnectClient.SDK_AVAILABLE -> {
-                    val client = HealthConnectClient.getOrCreate(this@MainActivity)
-                    healthConnectClient = client
                     try {
+                        val client = HealthConnectClient.getOrCreate(this@MainActivity)
                         val result = HealthConnectReader(client).read()
                         screenState = HealthConnectScreenState(
                             availability = HealthConnectAvailability.AVAILABLE,
@@ -92,14 +86,12 @@ class MainActivity : ComponentActivity() {
                 }
 
                 HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
-                    healthConnectClient = null
                     screenState = HealthConnectScreenState(
                         availability = HealthConnectAvailability.PROVIDER_UPDATE_REQUIRED,
                     )
                 }
 
                 else -> {
-                    healthConnectClient = null
                     screenState = HealthConnectScreenState(
                         availability = HealthConnectAvailability.UNAVAILABLE,
                     )
