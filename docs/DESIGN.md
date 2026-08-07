@@ -665,3 +665,160 @@ SPA に `/health` と下部タブ「健康」を追加し、1画面の上から�
 2. `lifegame-160.2`: 共有型・検証と Access 配下の JSON API (1 に依存)
 3. `lifegame-160.3`: `/health` の入力・履歴・修正・削除 UI (2 に依存)
 4. `lifegame-160.4`: ブラウザ E2E と、MCP／ブリーフィングへ健康記録が露出しない契約の回帰確認 (3 に依存)
+
+## 15. Phase 3: 保存リンクの設計
+
+Phase 3 初版は **A: URL を手動で保存し、あとで読む** に絞る。RSS 購読や自動収集から始めず、
+「見つけた URL を取り込む → 読むリストで見直す → アーカイブする」という最小ループが
+日常的に役立つかを先に確かめる。
+
+### 15.1 用語と利用シナリオ
+
+- **保存リンク (Saved Link)**: 利用者があとで確認するために残した外部 URL。URL、任意の題名、任意のメモを持つ
+- **読むリスト (Reading List)**: アーカイブしていない保存リンクの一覧
+- **アーカイブ (Archive)**: 保存リンクを読むリストから外し、保持したまま参照可能にする操作
+
+初版で完結させる利用シナリオは次の4つとする。
+
+1. Android の共有メニューから Web ページを lifegame に渡し、内容を確認して保存する
+2. 共有が使えない環境では `/reading` に URL を貼り付け、任意で題名・メモを付けて保存する
+3. 読むリストから元ページを新しいタブで開き、確認後にアーカイブする
+4. アーカイブしたリンクを戻す、題名・メモを直す、または完全に削除する
+
+「Inbox」は既存のタスク Inbox と衝突するため使わない。「既読」も、ページを開いた事実を
+自動追跡する設計ではないため使わない。
+
+### 15.2 データモデルと不変条件
+
+```sql
+CREATE TABLE saved_links (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  url         TEXT NOT NULL UNIQUE,
+  title       TEXT NOT NULL DEFAULT '',
+  note        TEXT NOT NULL DEFAULT '',
+  archived_at TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK (length(url) BETWEEN 1 AND 2048),
+  CHECK (length(title) <= 300),
+  CHECK (length(note) <= 2000)
+);
+CREATE INDEX idx_saved_links_reading
+  ON saved_links(archived_at, created_at DESC, id DESC);
+```
+
+- URL は `http:` と `https:` だけを受け付ける。`new URL(input).href` 相当で構文と基本表現を正規化するが、
+  query と fragment は内容を識別する場合があるため削らない
+- 正規化後の URL は1件だけ保持する。同じ URL が読むリストにあれば既存の保存リンクを返し、
+  アーカイブにあれば読むリストへ戻す。再保存で既存のメモを消さず、空の題名だけを新しい題名で補う
+- `archived_at` は API がアーカイブ操作時に設定・解除する。クライアントから任意の日時は受け取らない
+- 一覧は読むリストを `created_at DESC, id DESC`、アーカイブを `archived_at DESC, id DESC` で安定して並べる
+- 外部 URL を Worker から取得しない。題名は共有元から渡された値または利用者入力だけを保存し、
+  空なら UI が hostname と URL を表示する。これにより初版には SSRF、スクレイピング失敗、本文の著作権・保存領域を持ち込まない
+
+DB モジュールの公開境界は次の4操作に絞る。SQL、URL 正規化、重複時の再利用、制約エラーの解釈、
+安定した並び順とページングは `src/db/saved-links.ts` の内側に隠し、実 D1 を使うテストをこの境界に対して書く。
+
+- `listSavedLinks({ view, limit, offset })`
+- `createSavedLink({ url, title?, note? })`
+- `updateSavedLink(id, { title?, note?, archived? })`
+- `deleteSavedLink(id)`
+
+将来 RSS を追加するときも保存先としてこの境界を再利用できるが、初版では feed、source、publication date、
+汎用的な `InformationItem` 抽象を先回りして導入しない。
+
+### 15.3 JSON API
+
+ブラウザ用 API は既存の Cloudflare Access 配下に置き、タスク API と独立させる。
+
+| メソッド/パス                                                     | 役割                                                                           |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `GET /api/saved-links?view=reading\|archive&limit=...&offset=...` | 読むリストまたはアーカイブの一覧                                               |
+| `POST /api/saved-links`                                           | URL と任意の題名・メモから保存リンクを作成。重複なら上記の再保存規則を適用     |
+| `PATCH /api/saved-links/:id`                                      | 題名・メモを修正、または `archived: true/false` でアーカイブ／読むリストへ戻す |
+| `DELETE /api/saved-links/:id`                                     | 指定した保存リンクを完全に削除                                                 |
+
+一覧は既定50件、最大100件とし、`{ links, truncated, next_offset }` 形式でページングする。
+不正な URL・文字数・view・ページングは 400、存在しない更新・削除対象は 404 とする。
+POST の応答には `outcome: "created" | "existing" | "restored"` を含め、UI が新規保存、既存、
+アーカイブからの復帰を区別できるようにする。
+
+初版は保存リンクを MCP、`get_daily_summary`、朝のブリーフィングへ公開しない。既存の OAuth scope は
+保存リンクへの権限を与えない。将来必要になった時点で `links:read` / `links:write` と利用者の再同意を設計する。
+
+### 15.4 UI
+
+SPA に `/reading` と下部タブ「読む」を追加する。画面上部に URL、任意の題名、任意のメモの保存フォーム、
+その下に「読むリスト／アーカイブ」の切り替えと一覧を置く。
+
+一覧の各行は、題名（空なら hostname）、URL、メモ、保存日時を表示し、次の操作を持つ。
+
+- 元ページを新しいタブで開く (`target="_blank"`, `rel="noopener noreferrer"`)
+- アーカイブ／読むリストへ戻す
+- 題名とメモを編集する
+- 確認後に完全削除する
+
+現在の下部ナビゲーションは4項目かつ各ボタン `min-width: 82px` なので、5項目化では各項目を等幅、
+`min-width: 0` にして 320px 幅でも横にはみ出さないことを UI テストで固定する。保存・更新中の二重操作を防ぎ、
+失敗時はその行またはフォームに再試行可能なエラーを表示する。
+
+### 15.5 Android の Web Share Target
+
+インストール済み PWA を Android の共有先として登録するため、manifest に次を追加する。
+
+```json
+{
+  "share_target": {
+    "action": "/reading/share",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
+}
+```
+
+`GET` は DB 更新を行わず、`/reading/share` の確認フォームへ値を入れるだけとする。保存は利用者が確認後に
+通常の `POST /api/saved-links` を実行する。初版で service worker に POST body の受け渡し責務を追加せず、
+共有と手入力を同じ保存経路へ合流させるための境界である。
+
+共有元によって `url` が空で `text` や `title` に URL が入るため、`url`、`text`、`title` の順に最初の
+`http:` / `https:` URL を抽出し、残った title を題名候補にする。値は信頼せず通常の URL・文字数検証を通す。
+SPA は値を読み取った直後に `history.replaceState` で query を履歴から除くが、GET の request URL は
+ネットワークや Access のログに残り得る。この制約を初版の既知のトレードオフとし、機密 URL には手入力も含め
+使わない。共有先として表示されないブラウザや未インストール時のため、通常の貼り付けフォームを常に残す。
+
+Web Share Target 自体は広いブラウザ互換性を前提にせず、受け入れ条件を「対象 Android 端末の Chrome で、
+インストールした本番 PWA が URL 共有を確認フォームまで運べること」とする。
+
+### 15.6 セキュリティと検証
+
+- 共有入力、API 入力、D1 制約の各層で URL と文字列長を検証し、`javascript:`、`data:`、壊れた URL を拒否する
+- 外部ページをサーバーから取得しない。題名・メモはプレーンテキストとして React に描画する
+- JSON API と共有先画面はいずれも Cloudflare Access の既存認証境界内に置く
+- 実 D1 テストで作成、正規化、重複、アーカイブ復帰、安定した一覧、修正、削除、制約違反を確認する
+- route と component テストで共有パラメータの各配置、不正入力、履歴からの query 除去、320px の5タブを確認する
+- ブラウザ E2E で手入力から保存、reload 後の保持、外部リンク、アーカイブ／復帰、編集、削除を確認する
+- 本番受け入れでは Android 共有を確認し、対象端末が自動化できない場合は手順と実施結果をリリース記録に残す
+
+### 15.7 明示的な非目標
+
+- RSS/Atom の購読、feed discovery、定期 polling、自動取り込み
+- 外部ページの metadata・favicon・OGP・本文の取得、オフライン保存
+- タグ、検索、フォルダ、推薦、ソーシャル共有
+- AI 要約、分類、優先順位付け
+- MCP、朝のブリーフィング、他サービスへの公開
+- ファイル・画像・共有テキストだけの保存
+- 「開いたら既読」の自動追跡、閲覧履歴、読了率
+
+### Phase 3 初版のタスク分解
+
+下位の保存境界から順に実装する。
+
+1. `lifegame-5yn.1`: `saved_links` migration、DB モジュール、実 D1 テスト
+2. `lifegame-5yn.2`: 共有型・検証と Access 配下の JSON API、MCP 非公開の回帰確認 (1 に依存)
+3. `lifegame-5yn.3`: `/reading` の手入力・読むリスト・アーカイブ UI と5タブ対応 (2 に依存)
+4. `lifegame-5yn.4`: Android Web Share Target と保存前の確認経路 (3 に依存)
+5. `lifegame-5yn.5`: ブラウザ E2E、本番 smoke、デプロイ、実 Android での受け入れ確認 (4 に依存)
