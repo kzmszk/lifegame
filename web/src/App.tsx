@@ -309,7 +309,11 @@ export default function App() {
         ) : route.kind === 'health' ? (
           <HealthPage onError={showToast} />
         ) : route.kind === 'reading' ? (
-          <ReadingPage onError={showToast} initialDraft={route.shared} />
+          <ReadingPage
+            onError={showToast}
+            onNotice={showToast}
+            initialDraft={route.shared}
+          />
         ) : (
           <ConnectionSettings
             onBack={() => navigate('/')}

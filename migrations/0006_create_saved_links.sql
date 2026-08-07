@@ -7,6 +7,7 @@ CREATE TABLE saved_links (
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
   CHECK (length(url) BETWEEN 1 AND 2048),
+  CHECK (url GLOB 'http://?*' OR url GLOB 'https://?*'),
   CHECK (length(title) <= 300),
   CHECK (length(note) <= 2000)
 );

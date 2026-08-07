@@ -17,11 +17,17 @@ const baseUrl = (process.argv[2] ?? 'https://lifegame.tachicoma.com').replace(
 const checks = [
   { path: '/', expect: 302, why: 'SPA は Access の内側' },
   { path: '/health', expect: 302, why: '健康画面も Access の内側' },
+  { path: '/reading', expect: 302, why: '読む画面も Access の内側' },
   { path: '/api/tasks', expect: 302, why: 'API も Access の内側' },
   {
     path: '/api/health-entries',
     expect: 302,
     why: '健康 API も Access の内側',
+  },
+  {
+    path: '/api/saved-links',
+    expect: 302,
+    why: '保存リンク API も Access の内側',
   },
   { path: '/mcp', expect: 401, why: 'Bypass 済み。認証は MCP の OAuth が持つ' },
   {

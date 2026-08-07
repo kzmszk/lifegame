@@ -106,7 +106,7 @@ function relativeApiPath(path: string): string {
   return path.startsWith('/api/') ? path.slice('/api'.length) : path;
 }
 
-function parseTaskListInteger(
+function parseListInteger(
   value: string | undefined,
   defaultValue: number,
   minimum: number,
@@ -132,7 +132,7 @@ api.get('/tasks', async (c) => {
   if (viewParam !== 'today' && viewParam !== 'inbox' && viewParam !== 'all') {
     return error(c, 'view は today, inbox, all のいずれかです', 400);
   }
-  const limit = parseTaskListInteger(
+  const limit = parseListInteger(
     c.req.query('limit'),
     DEFAULT_TASK_LIST_LIMIT,
     1,
@@ -145,7 +145,7 @@ api.get('/tasks', async (c) => {
       400,
     );
   }
-  const offset = parseTaskListInteger(c.req.query('offset'), 0, 0);
+  const offset = parseListInteger(c.req.query('offset'), 0, 0);
   if (offset === null) {
     return error(c, 'offset は 0 以上の整数で指定してください', 400);
   }
@@ -259,7 +259,7 @@ api.delete('/tasks/:id', async (c) => {
 });
 
 api.get('/health-entries', async (c) => {
-  const limit = parseTaskListInteger(
+  const limit = parseListInteger(
     c.req.query('limit'),
     DEFAULT_HEALTH_ENTRY_LIST_LIMIT,
     1,
@@ -272,7 +272,7 @@ api.get('/health-entries', async (c) => {
       400,
     );
   }
-  const offset = parseTaskListInteger(c.req.query('offset'), 0, 0);
+  const offset = parseListInteger(c.req.query('offset'), 0, 0);
   if (offset === null)
     return error(c, 'offset は 0 以上の整数で指定してください', 400);
 
@@ -350,7 +350,7 @@ api.get('/saved-links', async (c) => {
   const view = c.req.query('view') ?? 'reading';
   if (view !== 'reading' && view !== 'archive')
     return error(c, 'view は reading または archive で指定してください', 400);
-  const limit = parseTaskListInteger(
+  const limit = parseListInteger(
     c.req.query('limit'),
     DEFAULT_SAVED_LINK_LIST_LIMIT,
     1,
@@ -362,7 +362,7 @@ api.get('/saved-links', async (c) => {
       `limit は 1 以上 ${MAX_SAVED_LINK_LIST_LIMIT} 以下の整数で指定してください`,
       400,
     );
-  const offset = parseTaskListInteger(c.req.query('offset'), 0, 0);
+  const offset = parseListInteger(c.req.query('offset'), 0, 0);
   if (offset === null)
     return error(c, 'offset は 0 以上の整数で指定してください', 400);
   const page = await listSavedLinks(c.env.DB, {

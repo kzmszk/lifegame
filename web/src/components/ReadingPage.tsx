@@ -18,6 +18,15 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function savedMessage(result: SavedLinkCreateResponse): string {
+  if (result.outcome === 'existing') return 'すでに読むリストにあります';
+  if (result.outcome === 'restored') {
+    return 'アーカイブから読むリストへ戻しました';
+  }
+  const label = result.link.title.trim() || result.link.url;
+  return `「${label}」を読むリストに保存しました`;
+}
+
 interface SavedLinkFormProps {
   onSaved: (result: SavedLinkCreateResponse) => Promise<void>;
   onError?: (message: string) => void;
@@ -219,7 +228,10 @@ export function SavedLinkList({
 }: SavedLinkListProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [pendingId, setPendingId] = useState<number | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<{
+    id: number;
+    message: string;
+  } | null>(null);
   const pendingIdRef = useRef<number | null>(null);
 
   const archive = async (link: SavedLink) => {
@@ -233,14 +245,15 @@ export function SavedLinkList({
       );
       if (editingId === link.id) setEditingId(null);
     } catch (caught) {
-      setActionError(
-        errorMessage(
+      setActionError({
+        id: link.id,
+        message: errorMessage(
           caught,
           view === 'reading'
             ? 'アーカイブに失敗しました'
             : '読むリストへの復帰に失敗しました',
         ),
-      );
+      });
     } finally {
       pendingIdRef.current = null;
       setPendingId(null);
@@ -258,7 +271,10 @@ export function SavedLinkList({
       await onDeleted(link.id);
       if (editingId === link.id) setEditingId(null);
     } catch (caught) {
-      setActionError(errorMessage(caught, '保存リンクの削除に失敗しました'));
+      setActionError({
+        id: link.id,
+        message: errorMessage(caught, '保存リンクの削除に失敗しました'),
+      });
     } finally {
       pendingIdRef.current = null;
       setPendingId(null);
@@ -282,11 +298,6 @@ export function SavedLinkList({
 
   return (
     <>
-      {actionError && (
-        <p className="form-error" role="alert">
-          {actionError}
-        </p>
-      )}
       <div className="saved-link-list">
         {links.map((link) => {
           const pending = pendingId === link.id;
@@ -341,6 +352,11 @@ export function SavedLinkList({
                   }}
                 />
               )}
+              {actionError?.id === link.id && (
+                <p className="form-error" role="alert">
+                  {actionError.message}
+                </p>
+              )}
             </article>
           );
         })}
@@ -359,9 +375,11 @@ export function SavedLinkList({
 
 export function ReadingPage({
   onError,
+  onNotice,
   initialDraft,
 }: {
   onError?: (message: string) => void;
+  onNotice?: (message: string) => void;
   initialDraft?: SharedLinkDraft;
 }) {
   const [view, setView] = useState<SavedLinkView>('reading');
@@ -427,9 +445,10 @@ export function ReadingPage({
       <SavedLinkForm
         onError={onError}
         initialDraft={initialDraft}
-        onSaved={async () => {
+        onSaved={async (result) => {
           if (view !== 'reading') setView('reading');
           else await load('reading');
+          onNotice?.(savedMessage(result));
         }}
       />
       <section className="saved-links" aria-labelledby="saved-links-title">

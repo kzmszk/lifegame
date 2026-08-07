@@ -151,7 +151,18 @@ describe('実 D1 上の保存リンク', () => {
     ]);
   });
 
-  it('D1 境界でも文字数制約を拒否する', async () => {
+  it('D1 境界でも URL の種類と文字数制約を拒否する', async () => {
+    for (const url of [
+      'javascript:alert(1)',
+      'data:text/plain,hello',
+      'not a url',
+    ]) {
+      await expect(
+        env.DB.prepare('INSERT INTO saved_links (url) VALUES (?)')
+          .bind(url)
+          .run(),
+      ).rejects.toThrow(/CHECK constraint failed/);
+    }
     await expect(
       env.DB.prepare('INSERT INTO saved_links (url, title) VALUES (?, ?)')
         .bind('https://example.com/too-long-title', '題'.repeat(301))
