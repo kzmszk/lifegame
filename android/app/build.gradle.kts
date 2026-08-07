@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.tachicoma.lifegame.companion"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.tachicoma.lifegame.companion"

@@ -12,7 +12,7 @@ Health Connectへの書き込み、履歴（30日より前）・バックグラ�
 
 ## debug APKを作る
 
-1. Android Studio（Ladybug以降）をインストールし、Android SDK Platform 35を追加する。
+1. Android Studio（Meerkat以降）をインストールし、Android SDK Platform 36を追加する。
 2. Android Studioでこの `android/` ディレクトリを開く。
 3. Gradle Syncが完了するまで待ち、`app` の `debug` ビルドを選ぶ。
 4. メニューの **Build > Build Bundle(s) / APK(s) > Build APK(s)** を選ぶ。
@@ -25,6 +25,7 @@ cd android
 ```
 
 生成物は `android/app/build/outputs/apk/debug/app-debug.apk` です。`./gradlew` が実行できない場合は、ファイルの実行権限を確認してください。
+WrapperはGradle 8.11.1、Android Gradle Pluginは8.9.1、compileSdkは36に固定しています。Health Connect 1.1.0のビルド要件を満たす組み合わせです。
 
 ## Android 16実機で確認する
 
