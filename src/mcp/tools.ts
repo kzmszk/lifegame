@@ -5,6 +5,7 @@ import {
   listTasks,
   TaskConflictError,
   updateTask,
+  type TaskListOptions,
   type TaskView,
 } from '../db/tasks';
 import { tokyoDayBounds } from '../lib/time';
@@ -16,7 +17,13 @@ import {
 } from '../lib/repeat';
 import { normalizeTaskCreateInput, TaskInputError } from '../lib/task-input';
 import { listCalendarEvents, listHolidays } from '../lib/google-calendar';
-import type { CalendarEvent, Task } from '../shared/types';
+import {
+  DEFAULT_TASK_LIST_LIMIT,
+  MAX_TASK_LIST_LIMIT,
+  type CalendarEvent,
+  type Task,
+  type TaskListPage,
+} from '../shared/types';
 import type { Env } from '../env';
 
 export interface DailySummary {
@@ -106,7 +113,7 @@ export async function getDailySummary(
         return [];
       });
 
-  const [todayTasks, inboxTasks, calendarEvents, holidayNames] =
+  const [todayPage, inboxPage, calendarEvents, holidayNames] =
     await Promise.all([
       listTasks(
         db,
@@ -114,6 +121,7 @@ export async function getDailySummary(
         bounds.today,
         bounds.startUtc,
         bounds.nextStartUtc,
+        { limit: null },
       ),
       listTasks(
         db,
@@ -121,10 +129,13 @@ export async function getDailySummary(
         bounds.today,
         bounds.startUtc,
         bounds.nextStartUtc,
+        { limit: null },
       ),
       events,
       holidays,
     ]);
+  const todayTasks = todayPage.tasks;
+  const inboxTasks = inboxPage.tasks;
   const openTasks = todayTasks.filter((task) => task.status === 'open');
   const completedTodayTasks = todayTasks.filter(
     (task) => task.status === 'done',
@@ -160,9 +171,25 @@ export async function listTasksForMcp(
   db: D1Database,
   view: TaskView = 'today',
   now: Date = new Date(),
-): Promise<Task[]> {
+  options: TaskListOptions = {},
+): Promise<TaskListPage> {
   if (view !== 'today' && view !== 'inbox' && view !== 'all') {
     throw new McpToolError('view は today, inbox, all のいずれかです');
+  }
+  const limit = options.limit ?? DEFAULT_TASK_LIST_LIMIT;
+  const offset = options.offset ?? 0;
+  if (
+    limit !== null &&
+    (!Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > MAX_TASK_LIST_LIMIT)
+  ) {
+    throw new McpToolError(
+      `limit は 1 以上 ${MAX_TASK_LIST_LIMIT} 以下の整数で指定してください`,
+    );
+  }
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new McpToolError('offset は 0 以上の整数で指定してください');
   }
   const bounds = tokyoDayBounds(now);
   return listTasks(
@@ -171,6 +198,7 @@ export async function listTasksForMcp(
     bounds.today,
     bounds.startUtc,
     bounds.nextStartUtc,
+    { limit, offset },
   );
 }
 

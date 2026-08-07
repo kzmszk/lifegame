@@ -4,6 +4,10 @@ export type TaskStatus = 'open' | 'done';
 
 export type TaskView = 'today' | 'inbox' | 'all';
 
+/** The maximum number of tasks returned by one list page. */
+export const DEFAULT_TASK_LIST_LIMIT = 100;
+export const MAX_TASK_LIST_LIMIT = 100;
+
 export interface Task {
   id: number;
   title: string;
@@ -121,9 +125,15 @@ export interface ConnectionsResponse {
   truncated: boolean;
 }
 
-export interface TasksResponse {
+export interface TaskListPage {
   tasks: Task[];
+  /** True when more tasks exist after this page. */
+  truncated: boolean;
+  /** Offset to use for the next request, or null when this is the last page. */
+  next_offset: number | null;
 }
+
+export type TasksResponse = TaskListPage;
 
 export interface TaskResponse {
   task: Task;

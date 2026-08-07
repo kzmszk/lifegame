@@ -1,9 +1,13 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type {
+  TaskListPage,
   Task,
   TaskCreateInput,
   TaskStatus,
   TaskUpdateInput,
+} from '../shared/types';
+import {
+  DEFAULT_TASK_LIST_LIMIT as DEFAULT_LIST_LIMIT,
 } from '../shared/types';
 import {
   assertRepeatState,
@@ -13,6 +17,12 @@ import {
 import { tokyoToday } from '../lib/time';
 
 export type TaskView = 'today' | 'inbox' | 'all';
+
+export interface TaskListOptions {
+  /** `null` is reserved for internal aggregate views that need every row. */
+  limit?: number | null;
+  offset?: number;
+}
 
 export class TaskConflictError extends Error {
   constructor(
@@ -91,9 +101,12 @@ export async function listTasks(
   today: string,
   dayStartUtc: string,
   nextDayStartUtc: string,
-): Promise<Task[]> {
+  options: TaskListOptions = {},
+): Promise<TaskListPage> {
   let sql = `SELECT ${TASK_COLUMNS} FROM tasks`;
-  let bindings: Array<string> = [];
+  const limit = options.limit === undefined ? DEFAULT_LIST_LIMIT : options.limit;
+  const offset = options.offset ?? 0;
+  let bindings: Array<string | number> = [];
 
   if (view === 'today') {
     sql += ` WHERE (status = 'open' AND (
@@ -105,19 +118,33 @@ export async function listTasks(
     sql += ` ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END,
       CASE WHEN ${ACTIONABLE_DATE} IS NULL THEN 1 ELSE 0 END, ${ACTIONABLE_DATE} ASC,
       CASE WHEN ${ACTIONABLE_TIME} IS NULL THEN 1 ELSE 0 END, ${ACTIONABLE_TIME} ASC,
-      priority DESC, created_at DESC`;
+      priority DESC, created_at DESC, id DESC`;
   } else if (view === 'inbox') {
     sql += ` WHERE status = 'open' AND due_date IS NULL AND scheduled_date IS NULL
-      ORDER BY priority DESC, created_at DESC`;
+      ORDER BY priority DESC, created_at DESC, id DESC`;
   } else {
     sql += ` ORDER BY created_at DESC, id DESC`;
+  }
+
+  if (limit !== null) {
+    sql += ' LIMIT ? OFFSET ?';
+    bindings.push(limit + 1, offset);
   }
 
   const result = await db
     .prepare(sql)
     .bind(...bindings)
     .all<TaskRow>();
-  return result.results.map(toTask);
+  const truncated = limit !== null && result.results.length > limit;
+  const rows =
+    limit !== null && result.results.length > limit
+      ? result.results.slice(0, limit)
+      : result.results;
+  return {
+    tasks: rows.map(toTask),
+    truncated,
+    next_offset: truncated ? offset + rows.length : null,
+  };
 }
 
 export async function getTask(

@@ -45,6 +45,10 @@ import type {
   ErrorResponse,
   TaskDraft,
 } from '../shared/types';
+import {
+  DEFAULT_TASK_LIST_LIMIT,
+  MAX_TASK_LIST_LIMIT,
+} from '../shared/types';
 import type { Env } from '../env';
 
 type ApiEnv = { Bindings: Env; Variables: { accessUser: AccessUser } };
@@ -82,6 +86,19 @@ function relativeApiPath(path: string): string {
   return path.startsWith('/api/') ? path.slice('/api'.length) : path;
 }
 
+function parseTaskListInteger(
+  value: string | undefined,
+  defaultValue: number,
+  minimum: number,
+  maximum?: number,
+): number | null {
+  if (value === undefined || !/^\d+$/.test(value)) return value === undefined ? defaultValue : null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum) return null;
+  if (maximum !== undefined && parsed > maximum) return null;
+  return parsed;
+}
+
 api.use('*', async (c, next) => {
   const user = await getAccessUser(c.env, c.req.raw);
   if (isAccessAuthError(user)) return error(c, user.message, user.status);
@@ -94,15 +111,33 @@ api.get('/tasks', async (c) => {
   if (viewParam !== 'today' && viewParam !== 'inbox' && viewParam !== 'all') {
     return error(c, 'view は today, inbox, all のいずれかです', 400);
   }
+  const limit = parseTaskListInteger(
+    c.req.query('limit'),
+    DEFAULT_TASK_LIST_LIMIT,
+    1,
+    MAX_TASK_LIST_LIMIT,
+  );
+  if (limit === null) {
+    return error(
+      c,
+      `limit は 1 以上 ${MAX_TASK_LIST_LIMIT} 以下の整数で指定してください`,
+      400,
+    );
+  }
+  const offset = parseTaskListInteger(c.req.query('offset'), 0, 0);
+  if (offset === null) {
+    return error(c, 'offset は 0 以上の整数で指定してください', 400);
+  }
   const bounds = tokyoDayBounds();
-  const tasks = await listTasks(
+  const page = await listTasks(
     c.env.DB,
     viewParam as TaskView,
     bounds.today,
     bounds.startUtc,
     bounds.nextStartUtc,
+    { limit, offset },
   );
-  return c.json({ tasks });
+  return c.json(page);
 });
 
 api.get('/tasks/:id', async (c) => {
