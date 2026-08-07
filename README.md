@@ -47,7 +47,18 @@ npx wrangler secret put ALLOWED_EMAIL
 npm run deploy
 ```
 
-デプロイは `npm run deploy` を使う。このコマンドは `wrangler deploy` の成功後に `npm run smoke` を実行し、境界の期待値から外れた場合は終了コード1で手順全体を失敗させる。未認証の smoke では `ACCESS_AUD` の取り違えを検出できないため、デプロイ後に Access 認証を通したブラウザでもJWT検証を確認する。
+通常の本番リリースは、クリーンで `origin/main` と一致した `main` から次を実行する。
+
+```sh
+npm run release:check # 本番を変更せず、品質・認証・migration・dry-run・現在の本番を確認
+npm run release       # 品質確認 → 本番D1 migration → deploy → smoke
+```
+
+`release` はブランチ、未コミット・未追跡ファイル、`origin/main` とのずれを検出すると停止する。
+本番D1 migrationを先に適用してから `npm run deploy` を呼び、デプロイ後のsmokeまで一続きにする。
+`npm run deploy` はmigrationを適用しない低水準コマンドなので、通常のリリースには直接使わない。
+未認証のsmokeでは `ACCESS_AUD` の取り違えを検出できないため、デプロイ後にAccess認証を通した
+ブラウザでもJWT検証と変更した画面の主要操作を確認する。
 
 `wrangler.jsonc` の `vars` にある `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` のプレースホルダは、デプロイ前に置き換える。
 `ACCESS_TEAM_DOMAIN` はCloudflare Zero Trustのチームドメイン（Access JWTの `iss`、通常は
