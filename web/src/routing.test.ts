@@ -13,6 +13,10 @@ describe('frontend routing helpers', () => {
     expect(routeForPath('/health')).toEqual({ kind: 'health' });
   });
 
+  it('recognizes the reading list screen', () => {
+    expect(routeForPath('/reading')).toEqual({ kind: 'reading' });
+  });
+
   it('reads a valid source view from a task detail query', () => {
     expect(routeForPath('/tasks/42?from=inbox')).toEqual({
       kind: 'detail',

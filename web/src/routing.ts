@@ -4,6 +4,7 @@ export type Route =
   | { kind: 'list'; view: TaskView }
   | { kind: 'detail'; id: number; from: TaskView }
   | { kind: 'health' }
+  | { kind: 'reading' }
   | { kind: 'settings' };
 
 function isTaskView(value: string | null): value is TaskView {
@@ -22,6 +23,7 @@ export function routeForPath(pathWithSearch: string): Route {
     };
   }
   if (pathname === '/health') return { kind: 'health' };
+  if (pathname === '/reading') return { kind: 'reading' };
   if (pathname === '/settings') return { kind: 'settings' };
   if (pathname === '/inbox') return { kind: 'list', view: 'inbox' };
   if (pathname === '/all') return { kind: 'list', view: 'all' };

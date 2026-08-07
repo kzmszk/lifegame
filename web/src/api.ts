@@ -9,6 +9,12 @@ import type {
   HealthEntry,
   HealthEntryCreateInput,
   HealthEntryUpdateInput,
+  SavedLink,
+  SavedLinkCreateInput,
+  SavedLinkCreateResponse,
+  SavedLinksResponse,
+  SavedLinkUpdateInput,
+  SavedLinkView,
   Task,
   TaskCreateInput,
   TaskDraft,
@@ -153,6 +159,40 @@ export async function updateHealthEntry(
 
 export async function deleteHealthEntry(id: number): Promise<void> {
   await request<{ ok: true }>(`/api/health-entries/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchSavedLinks(
+  view: SavedLinkView,
+  offset = 0,
+): Promise<SavedLinksResponse> {
+  const query = new URLSearchParams({ view, offset: String(offset) });
+  return request<SavedLinksResponse>(`/api/saved-links?${query}`);
+}
+
+export async function createSavedLink(
+  input: SavedLinkCreateInput,
+): Promise<SavedLinkCreateResponse> {
+  return request<SavedLinkCreateResponse>('/api/saved-links', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateSavedLink(
+  id: number,
+  input: SavedLinkUpdateInput,
+): Promise<SavedLink> {
+  const response = await request<{ link: SavedLink }>(
+    `/api/saved-links/${id}`,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  );
+  return response.link;
+}
+
+export async function deleteSavedLink(id: number): Promise<void> {
+  await request<{ ok: true }>(`/api/saved-links/${id}`, {
     method: 'DELETE',
   });
 }

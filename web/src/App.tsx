@@ -22,6 +22,7 @@ import type { DraftKind } from './components/DraftDialog';
 import { ErrorState, Loading } from './components/feedback';
 import { HealthPage } from './components/HealthPage';
 import { QuickAdd } from './components/QuickAdd';
+import { ReadingPage } from './components/ReadingPage';
 import { TaskDetail } from './components/TaskDetail';
 import { TaskList } from './components/TaskList';
 import { useToast } from './hooks/useToast';
@@ -300,6 +301,8 @@ export default function App() {
           />
         ) : route.kind === 'health' ? (
           <HealthPage onError={showToast} />
+        ) : route.kind === 'reading' ? (
+          <ReadingPage onError={showToast} />
         ) : (
           <ConnectionSettings
             onBack={() => navigate('/')}
@@ -307,8 +310,18 @@ export default function App() {
           />
         )}
       </main>
-      {(route.kind === 'list' || route.kind === 'health') && (
-        <BottomTabs view={route.kind === 'health' ? 'health' : route.view} />
+      {(route.kind === 'list' ||
+        route.kind === 'health' ||
+        route.kind === 'reading') && (
+        <BottomTabs
+          view={
+            route.kind === 'health'
+              ? 'health'
+              : route.kind === 'reading'
+                ? 'reading'
+                : route.view
+          }
+        />
       )}
       {draft && (
         <DraftDialog
