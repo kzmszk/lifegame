@@ -9,6 +9,7 @@ export default defineProject({
     exclude: [
       ...configDefaults.exclude,
       'src/db/health-entries.test.ts',
+      'src/db/saved-links.test.ts',
       'e2e/**',
       'src/db/migration-0004.test.ts',
       'src/db/tasks.test.ts',
