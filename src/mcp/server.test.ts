@@ -26,7 +26,7 @@ function liveDb() {
 }
 
 describe('MCP tool registration', () => {
-  it('keeps health data out of the published tool names and schemas', () => {
+  it('keeps health data and saved links out of the published tool names and schemas', () => {
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     registerLifegameTools(server, envFor(liveDb()), () => ({
       email: 'owner@example.com',
@@ -55,7 +55,7 @@ describe('MCP tool registration', () => {
 
     for (const tool of Object.values(registeredTools)) {
       expect(tool.description ?? '').not.toMatch(
-        /健康|体重|運動|weight_kg|occurred_on/i,
+        /健康|体重|運動|保存リンク|読むリスト|weight_kg|occurred_on|saved[_-]links?/i,
       );
     }
 
@@ -63,6 +63,7 @@ describe('MCP tool registration', () => {
       title: 'タスク',
       occurred_on: '2026-08-07',
       weight_kg: 68.4,
+      url: 'https://example.com',
     });
     expect(createInput.success).toBe(true);
     expect(createInput.data).toEqual({ title: 'タスク' });
@@ -71,6 +72,7 @@ describe('MCP tool registration', () => {
       id: 1,
       occurred_on: '2026-08-07',
       activity: '散歩',
+      archived: true,
     });
     expect(updateInput.success).toBe(true);
     expect(updateInput.data).toEqual({ id: 1 });

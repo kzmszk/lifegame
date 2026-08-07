@@ -1163,6 +1163,175 @@ describe('health entry API', () => {
   });
 });
 
+describe('保存リンク API', () => {
+  async function requestSavedLink(
+    path: string,
+    init: RequestInit = {},
+    requestEnv: Record<string, unknown> = {},
+  ): Promise<Response> {
+    return app.request(path, init, env(requestEnv));
+  }
+
+  async function createSavedLink(body: Record<string, unknown>) {
+    return requestSavedLink('/api/saved-links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('保存して読むリストをページングできる', async () => {
+    const firstResponse = await createSavedLink({
+      url: 'https://example.com/first?from=api#part',
+      title: '最初のリンク',
+      note: 'メモ',
+    });
+    expect(firstResponse.status).toBe(201);
+    expect(await firstResponse.json()).toMatchObject({
+      outcome: 'created',
+      link: {
+        url: 'https://example.com/first?from=api#part',
+        title: '最初のリンク',
+        note: 'メモ',
+        archived_at: null,
+      },
+    });
+    await createSavedLink({ url: 'https://example.com/second' });
+
+    const response = await requestSavedLink(
+      '/api/saved-links?view=reading&limit=1&offset=0',
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      links: [{ url: 'https://example.com/second' }],
+      truncated: true,
+      next_offset: 1,
+    });
+  });
+
+  it('重複を再利用し、編集・アーカイブ復帰・削除ができる', async () => {
+    const createdResponse = await createSavedLink({
+      url: 'HTTPS://EXAMPLE.COM:443/same',
+      note: '残すメモ',
+    });
+    const created = (await createdResponse.json()) as {
+      link: { id: number };
+    };
+
+    const existing = await createSavedLink({
+      url: 'https://example.com/same',
+      title: '補った題名',
+      note: '上書きしないメモ',
+    });
+    expect(existing.status).toBe(200);
+    expect(await existing.json()).toMatchObject({
+      outcome: 'existing',
+      link: {
+        id: created.link.id,
+        title: '補った題名',
+        note: '残すメモ',
+      },
+    });
+
+    const archived = await requestSavedLink(
+      `/api/saved-links/${created.link.id}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: true }),
+      },
+    );
+    expect(archived.status).toBe(200);
+    expect(await archived.json()).toMatchObject({
+      link: { archived_at: expect.any(String) },
+    });
+    const archive = await requestSavedLink('/api/saved-links?view=archive');
+    expect(await archive.json()).toMatchObject({
+      links: [{ id: created.link.id }],
+      truncated: false,
+      next_offset: null,
+    });
+
+    const restored = await createSavedLink({
+      url: 'https://example.com/same',
+    });
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toMatchObject({
+      outcome: 'restored',
+      link: { id: created.link.id, archived_at: null },
+    });
+
+    const edited = await requestSavedLink(
+      `/api/saved-links/${created.link.id}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: '修正後', note: '修正後のメモ' }),
+      },
+    );
+    expect(edited.status).toBe(200);
+    expect(await edited.json()).toMatchObject({
+      link: { title: '修正後', note: '修正後のメモ' },
+    });
+
+    const deleted = await requestSavedLink(
+      `/api/saved-links/${created.link.id}`,
+      { method: 'DELETE' },
+    );
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toEqual({ ok: true });
+    expect(
+      (
+        await requestSavedLink(`/api/saved-links/${created.link.id}`, {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(404);
+  });
+
+  it('不正入力、存在しない対象、未対応メソッドを区別し、Access を必須にする', async () => {
+    const invalidResponses = await Promise.all([
+      requestSavedLink('/api/saved-links?view=unknown'),
+      requestSavedLink('/api/saved-links?limit=0'),
+      requestSavedLink('/api/saved-links?limit=101'),
+      requestSavedLink('/api/saved-links?offset=-1'),
+      createSavedLink({ url: 'javascript:alert(1)' }),
+      createSavedLink({
+        url: 'https://example.com',
+        title: '題'.repeat(301),
+      }),
+      createSavedLink({ url: 'https://example.com', archived: true }),
+      requestSavedLink('/api/saved-links/0', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: true }),
+      }),
+      requestSavedLink('/api/saved-links/not-a-number', {
+        method: 'DELETE',
+      }),
+      requestSavedLink('/api/saved-links/999999', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: true }),
+      }),
+      requestSavedLink('/api/saved-links/999999', { method: 'DELETE' }),
+    ]);
+    expect(invalidResponses.map((response) => response.status)).toEqual([
+      400, 400, 400, 400, 400, 400, 400, 400, 400, 404, 404,
+    ]);
+
+    const unsupported = await requestSavedLink('/api/saved-links/1');
+    expect(unsupported.status).toBe(405);
+    expect(unsupported.headers.get('allow')).toBe('PATCH, DELETE');
+
+    const unauthorized = await app.request('/api/saved-links', {}, accessEnv());
+    expect(unauthorized.status).toBe(401);
+    expect(await unauthorized.json()).toEqual({
+      error: 'Cloudflare Access のユーザー情報がありません',
+    });
+  });
+});
+
 describe('calendar endpoints', () => {
   function calendarEnv(overrides: Record<string, unknown> = {}) {
     const store = new Map<string, string>();

@@ -21,6 +21,15 @@ import {
   type HealthEntryCreateInput,
   type HealthEntryUpdateInput,
 } from '../db/health-entries';
+import {
+  createSavedLink,
+  DEFAULT_SAVED_LINK_LIST_LIMIT,
+  deleteSavedLink,
+  listSavedLinks,
+  MAX_SAVED_LINK_LIST_LIMIT,
+  SavedLinkValidationError,
+  updateSavedLink,
+} from '../db/saved-links';
 import { parse } from '../lib/parse';
 import {
   RepeatRuleError,
@@ -55,6 +64,8 @@ import type {
   Connection,
   ErrorResponse,
   HealthEntryResponse,
+  SavedLinkCreateResponse,
+  SavedLinkResponse,
   TaskDraft,
 } from '../shared/types';
 import { DEFAULT_TASK_LIST_LIMIT, MAX_TASK_LIST_LIMIT } from '../shared/types';
@@ -335,6 +346,80 @@ api.patch('/health-entries/', patchHealthEntry);
 api.delete('/health-entries/:id', removeHealthEntry);
 api.delete('/health-entries/', removeHealthEntry);
 
+api.get('/saved-links', async (c) => {
+  const view = c.req.query('view') ?? 'reading';
+  if (view !== 'reading' && view !== 'archive')
+    return error(c, 'view は reading または archive で指定してください', 400);
+  const limit = parseTaskListInteger(
+    c.req.query('limit'),
+    DEFAULT_SAVED_LINK_LIST_LIMIT,
+    1,
+    MAX_SAVED_LINK_LIST_LIMIT,
+  );
+  if (limit === null)
+    return error(
+      c,
+      `limit は 1 以上 ${MAX_SAVED_LINK_LIST_LIMIT} 以下の整数で指定してください`,
+      400,
+    );
+  const offset = parseTaskListInteger(c.req.query('offset'), 0, 0);
+  if (offset === null)
+    return error(c, 'offset は 0 以上の整数で指定してください', 400);
+  const page = await listSavedLinks(c.env.DB, {
+    view,
+    limit,
+    offset,
+  });
+  return c.json(page);
+});
+
+api.post('/saved-links', async (c) => {
+  const body = await readBody(c);
+  if (!body) return error(c, 'JSON オブジェクトを指定してください', 400);
+  try {
+    const result = await createSavedLink(c.env.DB, body);
+    const response: SavedLinkCreateResponse = result;
+    return result.outcome === 'created'
+      ? c.json(response, 201)
+      : c.json(response);
+  } catch (thrown) {
+    if (thrown instanceof SavedLinkValidationError)
+      return error(c, thrown.message, 400);
+    throw thrown;
+  }
+});
+
+async function patchSavedLink(c: ApiContext) {
+  const id = parseId(c.req.param('id') ?? '');
+  if (!id) return error(c, '保存リンクIDが不正です', 400);
+  const body = await readBody(c);
+  if (!body) return error(c, 'JSON オブジェクトを指定してください', 400);
+  try {
+    const link = await updateSavedLink(c.env.DB, id, body);
+    return link
+      ? c.json<SavedLinkResponse>({ link })
+      : error(c, '保存リンクが見つかりません', 404);
+  } catch (thrown) {
+    if (thrown instanceof SavedLinkValidationError)
+      return error(c, thrown.message, 400);
+    throw thrown;
+  }
+}
+
+async function removeSavedLink(c: ApiContext) {
+  const id = parseId(c.req.param('id') ?? '');
+  if (!id) return error(c, '保存リンクIDが不正です', 400);
+  const deleted = await deleteSavedLink(c.env.DB, id);
+  return deleted
+    ? c.json({ ok: true })
+    : error(c, '保存リンクが見つかりません', 404);
+}
+
+api.patch('/saved-links/:id', patchSavedLink);
+api.patch('/saved-links/', patchSavedLink);
+api.delete('/saved-links/:id', removeSavedLink);
+api.delete('/saved-links/', removeSavedLink);
+
 function calendarError(c: ApiContext, thrown: unknown) {
   if (!(thrown instanceof GoogleCalendarError)) throw thrown;
   console.warn(`Google Calendar 呼び出しに失敗: ${thrown.message}`);
@@ -524,8 +609,10 @@ function knownApiPath(path: string): boolean {
     path === '/connections/' ||
     path === '/health-entries' ||
     path === '/health-entries/' ||
+    path === '/saved-links' ||
+    path === '/saved-links/' ||
     path === '/calendar/events' ||
-    /^\/(tasks|connections|health-entries)\/[^/]+$/.test(path)
+    /^\/(tasks|connections|health-entries|saved-links)\/[^/]+$/.test(path)
   );
 }
 
@@ -535,6 +622,8 @@ const staticPathMethods: Record<string, string> = {
   '/connections': 'GET',
   '/health-entries': 'GET, POST',
   '/health-entries/': 'GET, POST',
+  '/saved-links': 'GET, POST',
+  '/saved-links/': 'GET, POST',
   '/calendar/events': 'GET, POST',
 };
 
@@ -550,7 +639,9 @@ api.all('*', (c) => {
           ? 'DELETE'
           : path.startsWith('/health-entries/')
             ? 'PATCH, DELETE'
-            : 'GET, PATCH, DELETE'),
+            : path.startsWith('/saved-links/')
+              ? 'PATCH, DELETE'
+              : 'GET, PATCH, DELETE'),
     );
     return error(c, 'このAPIメソッドは対応していません', 405);
   }

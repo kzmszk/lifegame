@@ -315,7 +315,7 @@ describe('MCP tool handlers', () => {
       'scheduled_today_tasks',
     ]);
     expect(JSON.stringify(summary)).not.toMatch(
-      /健康|体重|運動|weight_kg|occurred_on|activity|health_entries/i,
+      /健康|体重|運動|保存リンク|読むリスト|weight_kg|occurred_on|activity|health_entries|saved_links/i,
     );
   });
 
@@ -340,7 +340,7 @@ describe('MCP tool handlers', () => {
       expect(briefing).toContain(section);
     }
     expect(briefing).not.toMatch(
-      /健康記録|体重測定|運動実績|health_entries|weight_kg|occurred_on/i,
+      /健康記録|体重測定|運動実績|保存リンク|読むリスト|health_entries|saved_links|weight_kg|occurred_on/i,
     );
   });
 

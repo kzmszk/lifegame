@@ -213,6 +213,47 @@ export interface HealthEntryResponse {
   entry: HealthEntry;
 }
 
+export type SavedLinkView = 'reading' | 'archive';
+export type SavedLinkCreateOutcome = 'created' | 'existing' | 'restored';
+
+export interface SavedLink {
+  id: number;
+  url: string;
+  title: string;
+  note: string;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedLinkCreateInput {
+  url: string;
+  title?: string;
+  note?: string;
+}
+
+export interface SavedLinkUpdateInput {
+  title?: string;
+  note?: string;
+  archived?: boolean;
+}
+
+export interface SavedLinkListPage {
+  links: SavedLink[];
+  truncated: boolean;
+  next_offset: number | null;
+}
+
+export type SavedLinksResponse = SavedLinkListPage;
+
+export interface SavedLinkResponse {
+  link: SavedLink;
+}
+
+export interface SavedLinkCreateResponse extends SavedLinkResponse {
+  outcome: SavedLinkCreateOutcome;
+}
+
 export interface ErrorResponse {
   error: string;
 }

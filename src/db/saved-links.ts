@@ -1,4 +1,21 @@
 import type { D1Database } from '@cloudflare/workers-types';
+import type {
+  SavedLink,
+  SavedLinkCreateInput,
+  SavedLinkCreateOutcome,
+  SavedLinkListPage,
+  SavedLinkUpdateInput,
+  SavedLinkView,
+} from '../shared/types';
+
+export type {
+  SavedLink,
+  SavedLinkCreateInput,
+  SavedLinkCreateOutcome,
+  SavedLinkListPage,
+  SavedLinkUpdateInput,
+  SavedLinkView,
+} from '../shared/types';
 
 export const DEFAULT_SAVED_LINK_LIST_LIMIT = 50;
 export const MAX_SAVED_LINK_LIST_LIMIT = 100;
@@ -6,41 +23,10 @@ export const MAX_SAVED_LINK_URL_LENGTH = 2048;
 export const MAX_SAVED_LINK_TITLE_LENGTH = 300;
 export const MAX_SAVED_LINK_NOTE_LENGTH = 2000;
 
-export type SavedLinkView = 'reading' | 'archive';
-export type SavedLinkCreateOutcome = 'created' | 'existing' | 'restored';
-
-export interface SavedLink {
-  id: number;
-  url: string;
-  title: string;
-  note: string;
-  archived_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SavedLinkCreateInput {
-  url: string;
-  title?: string;
-  note?: string;
-}
-
-export interface SavedLinkUpdateInput {
-  title?: string;
-  note?: string;
-  archived?: boolean;
-}
-
 export interface SavedLinkListOptions {
   view: SavedLinkView;
   limit?: number;
   offset?: number;
-}
-
-export interface SavedLinkListPage {
-  links: SavedLink[];
-  truncated: boolean;
-  next_offset: number | null;
 }
 
 export interface SavedLinkCreateResult {
@@ -72,6 +58,17 @@ function invalid(message: string): never {
   throw new SavedLinkValidationError(message);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyFields(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
 function normalizeUrl(value: unknown): string {
   if (typeof value !== 'string') invalid('url は文字列で指定してください');
   let url: URL;
@@ -99,6 +96,36 @@ function normalizeText(value: unknown, field: 'title' | 'note'): string {
     invalid(`${field} は ${maxLength} 文字以内で指定してください`);
   }
   return value;
+}
+
+function normalizeCreateInput(input: unknown): SavedLinkCreateInput {
+  if (!isRecord(input))
+    invalid('保存リンクは JSON オブジェクトで指定してください');
+  if (!hasOnlyFields(input, ['url', 'title', 'note']))
+    invalid('保存リンクに未対応の項目が含まれています');
+  return {
+    url: normalizeUrl(input.url),
+    title: normalizeText(input.title ?? '', 'title'),
+    note: normalizeText(input.note ?? '', 'note'),
+  };
+}
+
+function normalizeUpdateInput(input: unknown): SavedLinkUpdateInput {
+  if (!isRecord(input))
+    invalid('保存リンクは JSON オブジェクトで指定してください');
+  if (!hasOnlyFields(input, ['title', 'note', 'archived']))
+    invalid('保存リンクに未対応の項目が含まれています');
+  const normalized: SavedLinkUpdateInput = {};
+  if ('title' in input) normalized.title = normalizeText(input.title, 'title');
+  if ('note' in input) normalized.note = normalizeText(input.note, 'note');
+  if ('archived' in input) {
+    if (typeof input.archived !== 'boolean')
+      invalid('archived は真偽値で指定してください');
+    normalized.archived = input.archived;
+  }
+  if (Object.keys(normalized).length === 0)
+    invalid('変更する項目を1つ以上指定してください');
+  return normalized;
 }
 
 function toSavedLink(row: SavedLinkRow): SavedLink {
@@ -202,11 +229,10 @@ export async function listSavedLinks(
 
 export async function createSavedLink(
   db: D1Database,
-  input: SavedLinkCreateInput,
+  input: unknown,
 ): Promise<SavedLinkCreateResult> {
-  const url = normalizeUrl(input.url);
-  const title = normalizeText(input.title ?? '', 'title');
-  const note = normalizeText(input.note ?? '', 'note');
+  const normalized = normalizeCreateInput(input);
+  const { url, title = '', note = '' } = normalized;
   const current = await getSavedLinkByUrl(db, url);
   if (current) return reuseSavedLink(db, current, title);
 
@@ -234,26 +260,28 @@ export async function createSavedLink(
 export async function updateSavedLink(
   db: D1Database,
   id: number,
-  input: SavedLinkUpdateInput,
+  input: unknown,
 ): Promise<SavedLink | null> {
+  const normalized = normalizeUpdateInput(input);
   const current = await getSavedLink(db, id);
   if (!current) return null;
   const updates: string[] = [];
   const bindings: Array<string | number | null> = [];
-  if (input.title !== undefined) {
+  if (normalized.title !== undefined) {
     updates.push('title = ?');
-    bindings.push(normalizeText(input.title, 'title'));
+    bindings.push(normalized.title);
   }
-  if (input.note !== undefined) {
+  if (normalized.note !== undefined) {
     updates.push('note = ?');
-    bindings.push(normalizeText(input.note, 'note'));
+    bindings.push(normalized.note);
   }
-  if (input.archived !== undefined) {
+  if (normalized.archived !== undefined) {
     updates.push(
-      input.archived ? "archived_at = datetime('now')" : 'archived_at = NULL',
+      normalized.archived
+        ? "archived_at = datetime('now')"
+        : 'archived_at = NULL',
     );
   }
-  if (updates.length === 0) return current;
   updates.push("updated_at = datetime('now')");
   bindings.push(id);
   await db

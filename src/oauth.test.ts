@@ -91,7 +91,7 @@ describe('OAuth authorization policy', () => {
     ]);
   });
 
-  it('does not advertise or accept health scopes', () => {
+  it('does not advertise or accept health or saved-link scopes', () => {
     expect([...SUPPORTED_SCOPES]).not.toEqual(
       expect.arrayContaining(['health:read', 'health:write']),
     );
@@ -102,6 +102,16 @@ describe('OAuth authorization policy', () => {
       )?.error,
     ).toBe('invalid_scope');
     expect(grantedScopesForRequest([])).not.toContain('health:read');
+    expect([...SUPPORTED_SCOPES]).not.toEqual(
+      expect.arrayContaining(['links:read', 'links:write']),
+    );
+    expect(
+      validateAuthorizationRequest(
+        authorizationRequest({ scope: ['links:read'] }),
+        client(),
+      )?.error,
+    ).toBe('invalid_scope');
+    expect(grantedScopesForRequest([])).not.toContain('links:read');
   });
 });
 
