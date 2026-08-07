@@ -21,6 +21,7 @@ export default async function () {
       name: 'workers',
       include: [
         'src/db/migration-0004.test.ts',
+        'src/db/health-entries.test.ts',
         'src/db/tasks.test.ts',
         'src/routes/api.test.ts',
       ],
