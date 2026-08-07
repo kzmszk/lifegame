@@ -8,6 +8,7 @@ export default defineProject({
     // e2e/. Without this, Vitest's default include picks up its *.spec.ts files.
     exclude: [
       ...configDefaults.exclude,
+      'src/db/health-entries.test.ts',
       'e2e/**',
       'src/db/migration-0004.test.ts',
       'src/db/tasks.test.ts',
