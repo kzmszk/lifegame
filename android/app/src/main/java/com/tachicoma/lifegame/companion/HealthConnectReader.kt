@@ -47,7 +47,11 @@ class HealthConnectReader(
         }
         return try {
             val samples = readAll<WeightRecord>(range).map {
-                WeightSample(it.time, it.weight.inKilograms)
+                WeightMeasurement(
+                    measuredAt = it.time,
+                    zoneOffset = it.zoneOffset,
+                    kilograms = it.weight.inKilograms,
+                )
             }
             HealthSummaryFormatter.weight(samples)
         } catch (_: SecurityException) {
@@ -66,9 +70,11 @@ class HealthConnectReader(
         }
         return try {
             val samples = readAll<ExerciseSessionRecord>(range).map {
-                ExerciseSample(
+                ExerciseSession(
                     startedAt = it.startTime,
                     endedAt = it.endTime,
+                    startZoneOffset = it.startZoneOffset,
+                    endZoneOffset = it.endZoneOffset,
                     title = it.title?.takeIf(String::isNotBlank) ?: exerciseTypeName(it.exerciseType),
                 )
             }
@@ -89,7 +95,13 @@ class HealthConnectReader(
         }
         return try {
             val samples = readAll<SleepSessionRecord>(range).map {
-                SleepSample(it.startTime, it.endTime, it.title)
+                SleepSession(
+                    startedAt = it.startTime,
+                    endedAt = it.endTime,
+                    startZoneOffset = it.startZoneOffset,
+                    endZoneOffset = it.endZoneOffset,
+                    title = it.title,
+                )
             }
             HealthSummaryFormatter.sleep(samples)
         } catch (_: SecurityException) {

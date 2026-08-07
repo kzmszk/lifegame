@@ -3,6 +3,7 @@ package com.tachicoma.lifegame.companion
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -21,7 +22,7 @@ enum class HealthDataType(
 ) {
     WEIGHT("体重測定", HealthPermissions.READ_WEIGHT),
     EXERCISE("運動実績", HealthPermissions.READ_EXERCISE),
-    SLEEP("睡眠", HealthPermissions.READ_SLEEP),
+    SLEEP("睡眠実績", HealthPermissions.READ_SLEEP),
 }
 
 enum class SummaryAccess {
@@ -38,20 +39,25 @@ data class HealthDataSummary(
     val errorMessage: String? = null,
 )
 
-data class WeightSample(
+data class WeightMeasurement(
     val measuredAt: Instant,
+    val zoneOffset: ZoneOffset?,
     val kilograms: Double,
 )
 
-data class ExerciseSample(
+data class ExerciseSession(
     val startedAt: Instant,
     val endedAt: Instant,
+    val startZoneOffset: ZoneOffset?,
+    val endZoneOffset: ZoneOffset?,
     val title: String,
 )
 
-data class SleepSample(
+data class SleepSession(
     val startedAt: Instant,
     val endedAt: Instant,
+    val startZoneOffset: ZoneOffset?,
+    val endZoneOffset: ZoneOffset?,
     val title: String?,
 )
 
@@ -79,42 +85,48 @@ object HealthReadWindow {
 
 /** Pure mapping/formatting functions stay independent of Android and Health Connect. */
 object HealthSummaryFormatter {
-    fun weight(samples: List<WeightSample>, zone: ZoneId = ZoneId.systemDefault()): HealthDataSummary {
-        val latest = samples.maxByOrNull(WeightSample::measuredAt)
+    fun weight(
+        samples: List<WeightMeasurement>,
+        fallbackZone: ZoneId = ZoneId.systemDefault(),
+    ): HealthDataSummary {
+        val latest = samples.maxByOrNull(WeightMeasurement::measuredAt)
         return HealthDataSummary(
             type = HealthDataType.WEIGHT,
             access = SummaryAccess.GRANTED,
             count = samples.size,
             preview = latest?.let {
-                "${formatDateTime(it.measuredAt, zone)}・${formatNumber(it.kilograms)} kg"
+                "${formatDateTime(it.measuredAt, it.zoneOffset, fallbackZone)}・${formatNumber(it.kilograms)} kg"
             },
         )
     }
 
     fun exercise(
-        samples: List<ExerciseSample>,
-        zone: ZoneId = ZoneId.systemDefault(),
+        samples: List<ExerciseSession>,
+        fallbackZone: ZoneId = ZoneId.systemDefault(),
     ): HealthDataSummary {
-        val latest = samples.maxByOrNull(ExerciseSample::startedAt)
+        val latest = samples.maxByOrNull(ExerciseSession::startedAt)
         return HealthDataSummary(
             type = HealthDataType.EXERCISE,
             access = SummaryAccess.GRANTED,
             count = samples.size,
             preview = latest?.let {
-                "${it.title}・${formatDateTime(it.startedAt, zone)}・${formatDuration(it.startedAt, it.endedAt)}"
+                "${it.title}・${formatDateTime(it.startedAt, it.startZoneOffset, fallbackZone)}・${formatDuration(it.startedAt, it.endedAt)}"
             },
         )
     }
 
-    fun sleep(samples: List<SleepSample>, zone: ZoneId = ZoneId.systemDefault()): HealthDataSummary {
-        val latest = samples.maxByOrNull(SleepSample::startedAt)
+    fun sleep(
+        samples: List<SleepSession>,
+        fallbackZone: ZoneId = ZoneId.systemDefault(),
+    ): HealthDataSummary {
+        val latest = samples.maxByOrNull(SleepSession::startedAt)
         return HealthDataSummary(
             type = HealthDataType.SLEEP,
             access = SummaryAccess.GRANTED,
             count = samples.size,
             preview = latest?.let {
                 val title = it.title?.takeIf(String::isNotBlank)?.let { value -> "$value・" }.orEmpty()
-                "$title${formatDateTime(it.startedAt, zone)}・${formatDuration(it.startedAt, it.endedAt)}"
+                "$title${formatDateTime(it.startedAt, it.startZoneOffset, fallbackZone)}・${formatDuration(it.startedAt, it.endedAt)}"
             },
         )
     }
@@ -125,8 +137,15 @@ object HealthSummaryFormatter {
     fun failed(type: HealthDataType, message: String): HealthDataSummary =
         HealthDataSummary(type = type, access = SummaryAccess.READ_FAILED, errorMessage = message)
 
-    fun formatDateTime(instant: Instant, zone: ZoneId): String =
-        DateTimeFormatter.ofPattern("M月d日 HH:mm", Locale.JAPAN).withZone(zone).format(instant)
+    fun formatDateTime(
+        instant: Instant,
+        recordedOffset: ZoneOffset?,
+        fallbackZone: ZoneId = ZoneId.systemDefault(),
+    ): String {
+        // Health Connect leaves offsets nullable. Only use the device zone when the record has none.
+        val zone = recordedOffset ?: fallbackZone
+        return DateTimeFormatter.ofPattern("M月d日 HH:mm", Locale.JAPAN).withZone(zone).format(instant)
+    }
 
     fun formatDuration(start: Instant, end: Instant): String {
         val minutes = Duration.between(start, end).toMinutes().coerceAtLeast(0)

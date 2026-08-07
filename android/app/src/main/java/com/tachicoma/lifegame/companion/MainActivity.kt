@@ -127,7 +127,7 @@ private fun HealthConnectScreen(
             fontWeight = FontWeight.Bold,
         )
         Text(
-            text = "Health Connectの直近30日を、この端末の画面だけで確認します。",
+            text = "Health Connectの直近30日の健康記録を、この端末の画面だけで確認します。",
             style = MaterialTheme.typography.bodyLarge,
         )
 
@@ -166,7 +166,7 @@ private fun HealthConnectScreen(
 
         HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
         Text(
-            text = "この試作版は読み取り専用です。体重・運動実績・睡眠を端末内に表示するだけで、Health Connectへの書き込み、lifegameサーバーへの送信、バックグラウンド同期は行いません。",
+            text = "この試作版は読み取り専用です。体重測定・運動実績・睡眠実績を端末内に表示するだけで、Health Connectへの書き込み、lifegameサーバーへの送信、バックグラウンド同期は行いません。",
             style = MaterialTheme.typography.bodyMedium,
         )
     }
@@ -267,7 +267,7 @@ class PermissionsRationaleActivity : ComponentActivity() {
                     ) {
                         Text("lifegame 健康確認のプライバシー説明", style = MaterialTheme.typography.headlineSmall)
                         Text(
-                            "このアプリは、利用者が許可した体重・運動実績・睡眠の読み取り権限だけを使い、直近30日の代表項目と件数を端末画面に表示します。",
+                            "このアプリは、利用者が許可した体重測定・運動実績・睡眠実績の読み取り権限だけを使い、直近30日の代表項目と件数を端末画面に表示します。",
                         )
                         Text(
                             "データはHealth Connectから読み取るだけです。Health Connectへの書き込み、サーバーへの送信、広告・分析への利用、バックグラウンド同期は行いません。",
