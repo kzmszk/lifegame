@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Weekly, human-reviewed dependency updates for npm and GitHub Actions.",
+  "extends": ["config:recommended", ":dependencyDashboard"],
+  "enabledManagers": ["npm", "github-actions"],
+  "timezone": "Asia/Tokyo",
+  "schedule": ["* 9-10 * * 1"],
+  "updateNotScheduled": false,
+  "prConcurrentLimit": 5,
+  "automerge": false,
+  "platformAutomerge": false,
+  "packageRules": [
+    {
+      "description": "Group development dependency patch updates into one PR.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "development dependency patches"
+    },
+    {
+      "description": "Group GitHub Actions patch updates into one PR.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "GitHub Actions patches"
+    },
+    {
+      "description": "OAuth and MCP dependencies always require human review.",
+      "matchPackageNames": [
+        "@cloudflare/workers-oauth-provider",
+        "@modelcontextprotocol/sdk",
+        "agents"
+      ],
+      "automerge": false
+    }
+  ]
+}
