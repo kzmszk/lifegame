@@ -3,6 +3,7 @@
 // the pinned legacy McpAgent runtime requires Cloudflare Durable Object
 // primitives that Vitest's Node environment does not provide directly.
 
+import { readFileSync } from 'node:fs';
 import type { D1Database } from '@cloudflare/workers-types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -295,6 +296,52 @@ describe('MCP tool handlers', () => {
     expect(summary.completed_today_tasks.map((task) => task.title)).toEqual([
       '今日完了',
     ]);
+  });
+
+  it('keeps the morning briefing summary task/calendar-only', async () => {
+    const summary = await getDailySummary(
+      { DB: new FakeD1([row({ title: 'タスク' })]) } as unknown as Env,
+      new Date('2026-08-03T03:00:00.000Z'),
+    );
+
+    expect(Object.keys(summary).sort()).toEqual([
+      'completed_today_tasks',
+      'date',
+      'due_today_tasks',
+      'inbox_count',
+      'open_tasks',
+      'overdue_tasks',
+      'scheduled_overdue_tasks',
+      'scheduled_today_tasks',
+    ]);
+    expect(JSON.stringify(summary)).not.toMatch(
+      /健康|体重|運動|weight_kg|occurred_on|activity|health_entries/i,
+    );
+  });
+
+  it('keeps the morning briefing skill contract focused on task/calendar data', () => {
+    const briefing = readFileSync(
+      new URL('../../skills/morning-briefing/SKILL.md', import.meta.url),
+      'utf8',
+    );
+
+    expect(briefing).toContain('get_daily_summary');
+    expect(briefing).toContain('## 今日（YYYY-MM-DD）');
+    for (const section of [
+      '### 予定',
+      '### 期限切れ',
+      '### 実行予定を過ぎたタスク',
+      '### 今日が期限',
+      '### 今日の実行予定',
+      '### Inbox',
+      '### 今日の完了',
+      '### まずやること',
+    ]) {
+      expect(briefing).toContain(section);
+    }
+    expect(briefing).not.toMatch(
+      /健康記録|体重測定|運動実績|health_entries|weight_kg|occurred_on/i,
+    );
   });
 
   it('treats the JST day end as exclusive at 15:00 UTC', async () => {

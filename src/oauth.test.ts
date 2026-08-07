@@ -8,6 +8,7 @@ import {
   CSP_REPORT_PATH,
   defaultHandler,
   grantedScopesForRequest,
+  SUPPORTED_SCOPES,
   validateAuthorizationRequest,
 } from './oauth';
 import { validateClientRegistrationMetadata } from './lib/oauth-policy';
@@ -88,6 +89,19 @@ describe('OAuth authorization policy', () => {
       'tasks:read',
       'tasks:write',
     ]);
+  });
+
+  it('does not advertise or accept health scopes', () => {
+    expect([...SUPPORTED_SCOPES]).not.toEqual(
+      expect.arrayContaining(['health:read', 'health:write']),
+    );
+    expect(
+      validateAuthorizationRequest(
+        authorizationRequest({ scope: ['health:read'] }),
+        client(),
+      )?.error,
+    ).toBe('invalid_scope');
+    expect(grantedScopesForRequest([])).not.toContain('health:read');
   });
 });
 

@@ -26,6 +26,56 @@ function liveDb() {
 }
 
 describe('MCP tool registration', () => {
+  it('keeps health data out of the published tool names and schemas', () => {
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    registerLifegameTools(server, envFor(liveDb()), () => ({
+      email: 'owner@example.com',
+      scopes: ['tasks:read', 'tasks:write'],
+    }));
+
+    const registeredTools = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          {
+            description?: string;
+            inputSchema?: z.ZodType;
+          }
+        >;
+      }
+    )._registeredTools;
+
+    expect(Object.keys(registeredTools).sort()).toEqual([
+      'create_task',
+      'delete_task',
+      'get_daily_summary',
+      'list_tasks',
+      'update_task',
+    ]);
+
+    for (const tool of Object.values(registeredTools)) {
+      expect(tool.description ?? '').not.toMatch(
+        /健康|体重|運動|weight_kg|occurred_on/i,
+      );
+    }
+
+    const createInput = registeredTools.create_task.inputSchema!.safeParse({
+      title: 'タスク',
+      occurred_on: '2026-08-07',
+      weight_kg: 68.4,
+    });
+    expect(createInput.success).toBe(true);
+    expect(createInput.data).toEqual({ title: 'タスク' });
+
+    const updateInput = registeredTools.update_task.inputSchema!.safeParse({
+      id: 1,
+      occurred_on: '2026-08-07',
+      activity: '散歩',
+    });
+    expect(updateInput.success).toBe(true);
+    expect(updateInput.data).toEqual({ id: 1 });
+  });
+
   it('publishes read/write/destructive annotations and returns tool errors for missing scopes', async () => {
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     const props = { email: 'owner@example.com', scopes: ['tasks:read'] };
