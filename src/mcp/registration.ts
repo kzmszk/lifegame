@@ -1,9 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import {
-  DEFAULT_TASK_LIST_LIMIT,
-  MAX_TASK_LIST_LIMIT,
-} from '../shared/types';
+import { DEFAULT_TASK_LIST_LIMIT, MAX_TASK_LIST_LIMIT } from '../shared/types';
 import type { McpAuthProps, McpScope } from './auth';
 import type { Env } from '../env';
 import { assertGrantActive, assertMcpScope, hasMcpScope } from './auth';
@@ -139,8 +136,7 @@ export function registerLifegameTools(
   server.registerTool(
     'list_tasks',
     {
-      description:
-        `既存のGET /api/tasksと同じ意味で、today・inbox・allのいずれかのタスク一覧を返します。1回の呼び出しは最大${MAX_TASK_LIST_LIMIT}件で、続きがある場合はtruncated=trueとnext_offsetを返します。todayの日付境界はサーバー側のJSTで決まります。`,
+      description: `既存のGET /api/tasksと同じ意味で、today・inbox・allのいずれかのタスク一覧を返します。1回の呼び出しは最大${MAX_TASK_LIST_LIMIT}件で、続きがある場合はtruncated=trueとnext_offsetを返します。todayの日付境界はサーバー側のJSTで決まります。`,
       inputSchema: {
         view: z
           .enum(['today', 'inbox', 'all'])
@@ -152,7 +148,9 @@ export function registerLifegameTools(
           .min(1)
           .max(MAX_TASK_LIST_LIMIT)
           .default(DEFAULT_TASK_LIST_LIMIT)
-          .describe(`1回に取得する件数（1〜${MAX_TASK_LIST_LIMIT}。既定値は${DEFAULT_TASK_LIST_LIMIT}）`),
+          .describe(
+            `1回に取得する件数（1〜${MAX_TASK_LIST_LIMIT}。既定値は${DEFAULT_TASK_LIST_LIMIT}）`,
+          ),
         offset: z
           .number()
           .int()

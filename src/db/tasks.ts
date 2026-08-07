@@ -6,9 +6,7 @@ import type {
   TaskStatus,
   TaskUpdateInput,
 } from '../shared/types';
-import {
-  DEFAULT_TASK_LIST_LIMIT as DEFAULT_LIST_LIMIT,
-} from '../shared/types';
+import { DEFAULT_TASK_LIST_LIMIT as DEFAULT_LIST_LIMIT } from '../shared/types';
 import {
   assertRepeatState,
   assertScheduleState,
@@ -104,7 +102,8 @@ export async function listTasks(
   options: TaskListOptions = {},
 ): Promise<TaskListPage> {
   let sql = `SELECT ${TASK_COLUMNS} FROM tasks`;
-  const limit = options.limit === undefined ? DEFAULT_LIST_LIMIT : options.limit;
+  const limit =
+    options.limit === undefined ? DEFAULT_LIST_LIMIT : options.limit;
   const offset = options.offset ?? 0;
   let bindings: Array<string | number> = [];
 

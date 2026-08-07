@@ -113,6 +113,10 @@ class FakeStatement {
     } else {
       results = [...this.database.rows];
     }
+    const [pageSize, offset] = this.bindings.slice(-2);
+    if (typeof pageSize === 'number' && typeof offset === 'number') {
+      results = results.slice(offset, offset + pageSize);
+    }
     return { results: results as T[], success: true, meta: { changes: 0 } };
   }
 
@@ -327,7 +331,10 @@ describe('MCP tool handlers', () => {
       new Date('2026-08-03T14:59:59.999Z'),
     );
 
-    expect(tasks.map((task) => task.title)).toEqual(['開始時刻', '終了直前']);
+    expect(tasks.tasks.map((task) => task.title)).toEqual([
+      '開始時刻',
+      '終了直前',
+    ]);
   });
 
   it('supports every list_tasks view and rejects an invalid view', async () => {
@@ -339,17 +346,42 @@ describe('MCP tool handlers', () => {
     const now = new Date('2026-08-03T03:00:00.000Z');
 
     expect(
-      (await listTasksForMcp(db, 'today', now)).map((task) => task.title),
+      (await listTasksForMcp(db, 'today', now)).tasks.map((task) => task.title),
     ).toEqual(['今日']);
     expect(
-      (await listTasksForMcp(db, 'inbox', now)).map((task) => task.title),
+      (await listTasksForMcp(db, 'inbox', now)).tasks.map((task) => task.title),
     ).toEqual(['Inbox']);
     expect(
-      (await listTasksForMcp(db, 'all', now)).map((task) => task.title),
+      (await listTasksForMcp(db, 'all', now)).tasks.map((task) => task.title),
     ).toEqual(['今日', 'Inbox', 'すべてのみ']);
     await expect(listTasksForMcp(db, 'invalid' as never, now)).rejects.toThrow(
       new McpToolError('view は today, inbox, all のいずれかです'),
     );
+  });
+
+  it('returns a bounded page and exposes the next offset', async () => {
+    const db = new FakeD1([
+      row({ id: 1, title: '先頭' }),
+      row({ id: 2, title: '次' }),
+      row({ id: 3, title: '最後' }),
+    ]) as unknown as D1Database;
+    const now = new Date('2026-08-03T03:00:00.000Z');
+
+    const first = await listTasksForMcp(db, 'all', now, {
+      limit: 2,
+      offset: 0,
+    });
+    expect(first.tasks.map((task) => task.title)).toEqual(['先頭', '次']);
+    expect(first.truncated).toBe(true);
+    expect(first.next_offset).toBe(2);
+
+    const last = await listTasksForMcp(db, 'all', now, {
+      limit: 2,
+      offset: first.next_offset!,
+    });
+    expect(last.tasks.map((task) => task.title)).toEqual(['最後']);
+    expect(last.truncated).toBe(false);
+    expect(last.next_offset).toBeNull();
   });
 
   it('validates structured creation fields before persistence', async () => {

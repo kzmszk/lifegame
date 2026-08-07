@@ -51,6 +51,10 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [tasksTruncated, setTasksTruncated] = useState(false);
+  const [nextTaskOffset, setNextTaskOffset] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [toast, showToast] = useToast();
   const [draft, setDraft] = useState<PendingDraft | null>(null);
   const route = routeForPath(path);
@@ -73,23 +77,38 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  const loadList = useCallback(async (view: TaskView) => {
+  const loadList = useCallback(async (view: TaskView, offset = 0) => {
     const generation = ++listRequestGeneration.current;
-    setLoading(true);
-    setLoadError(null);
+    const appending = offset > 0;
+    if (appending) {
+      setLoadingMore(true);
+      setLoadMoreError(null);
+    } else {
+      setLoading(true);
+      setLoadError(null);
+      setLoadMoreError(null);
+    }
     try {
-      const nextTasks = await fetchTasks(view);
+      const response = await fetchTasks(view, offset);
       if (generation !== listRequestGeneration.current) return;
       const currentRoute = routeRef.current;
       if (currentRoute.kind !== 'list' || currentRoute.view !== view) return;
-      setTasks(nextTasks);
+      setTasks((current) =>
+        appending ? [...current, ...response.tasks] : response.tasks,
+      );
+      setTasksTruncated(response.truncated);
+      setNextTaskOffset(response.next_offset);
     } catch (error) {
       if (generation !== listRequestGeneration.current) return;
-      setLoadError(
-        error instanceof Error ? error.message : 'タスクの取得に失敗しました',
-      );
+      const message =
+        error instanceof Error ? error.message : 'タスクの取得に失敗しました';
+      if (appending) setLoadMoreError(message);
+      else setLoadError(message);
     } finally {
-      if (generation === listRequestGeneration.current) setLoading(false);
+      if (generation === listRequestGeneration.current) {
+        if (appending) setLoadingMore(false);
+        else setLoading(false);
+      }
     }
   }, []);
 
@@ -258,6 +277,13 @@ export default function App() {
               <TaskList
                 tasks={tasks}
                 view={route.view}
+                truncated={tasksTruncated}
+                loadingMore={loadingMore}
+                loadMoreError={loadMoreError}
+                onLoadMore={() => {
+                  if (nextTaskOffset !== null)
+                    void loadList(route.view, nextTaskOffset);
+                }}
                 updatingTaskIds={updatingTaskIds}
                 onToggle={handleToggle}
                 onOpen={(id) => navigate(`/tasks/${id}?from=${route.view}`)}

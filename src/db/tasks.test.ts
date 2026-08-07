@@ -230,7 +230,7 @@ describe('task ordering on real D1', () => {
       '2099-01-02 00:00:00',
     );
 
-    expect(tasks.map((task) => task.title)).toEqual([
+    expect(tasks.tasks.map((task) => task.title)).toEqual([
       'deadline later',
       'scheduled without deadline time',
     ]);

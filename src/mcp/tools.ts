@@ -180,9 +180,7 @@ export async function listTasksForMcp(
   const offset = options.offset ?? 0;
   if (
     limit !== null &&
-    (!Number.isSafeInteger(limit) ||
-      limit < 1 ||
-      limit > MAX_TASK_LIST_LIMIT)
+    (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_TASK_LIST_LIMIT)
   ) {
     throw new McpToolError(
       `limit は 1 以上 ${MAX_TASK_LIST_LIMIT} 以下の整数で指定してください`,

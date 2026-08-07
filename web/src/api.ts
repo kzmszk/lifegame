@@ -8,6 +8,7 @@ import type {
   Task,
   TaskCreateInput,
   TaskDraft,
+  TasksResponse,
   TaskUpdateInput,
   TaskView,
 } from '../../src/shared/types';
@@ -31,9 +32,12 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export async function fetchTasks(view: TaskView): Promise<Task[]> {
-  const response = await request<{ tasks: Task[] }>(`/api/tasks?view=${view}`);
-  return response.tasks;
+export async function fetchTasks(
+  view: TaskView,
+  offset = 0,
+): Promise<TasksResponse> {
+  const query = new URLSearchParams({ view, offset: String(offset) });
+  return request<TasksResponse>(`/api/tasks?${query}`);
 }
 
 export async function fetchTask(id: number): Promise<Task> {

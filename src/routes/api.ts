@@ -45,10 +45,7 @@ import type {
   ErrorResponse,
   TaskDraft,
 } from '../shared/types';
-import {
-  DEFAULT_TASK_LIST_LIMIT,
-  MAX_TASK_LIST_LIMIT,
-} from '../shared/types';
+import { DEFAULT_TASK_LIST_LIMIT, MAX_TASK_LIST_LIMIT } from '../shared/types';
 import type { Env } from '../env';
 
 type ApiEnv = { Bindings: Env; Variables: { accessUser: AccessUser } };
@@ -92,7 +89,8 @@ function parseTaskListInteger(
   minimum: number,
   maximum?: number,
 ): number | null {
-  if (value === undefined || !/^\d+$/.test(value)) return value === undefined ? defaultValue : null;
+  if (value === undefined || !/^\d+$/.test(value))
+    return value === undefined ? defaultValue : null;
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum) return null;
   if (maximum !== undefined && parsed > maximum) return null;

@@ -151,16 +151,18 @@ CREATE TABLE logs (
 
 SPA が利用する JSON API。
 
-| メソッド/パス                           | 役割                                                                                             |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `GET /api/tasks?view=today\|inbox\|all` | タスク一覧の取得                                                                                 |
-| `GET /api/tasks/:id`                    | タスク1件の取得                                                                                  |
-| `POST /api/tasks/parse`                 | テキスト解析のみ(**保存しない**)。`{ text }` を受け取り `TaskDraft` を返す。音声入力の確認UI用   |
-| `POST /api/tasks`                       | タスク作成。`{ text }` を受け取りパーサーで期限抽出、または構造化済み `{ title, due_date, ... }` |
-| `PATCH /api/tasks/:id`                  | 更新(完了トグル含む)                                                                             |
-| `DELETE /api/tasks/:id`                 | 削除                                                                                             |
+| メソッド/パス                                                | 役割                                                                                             |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `GET /api/tasks?view=today\|inbox\|all&limit=...&offset=...` | タスク一覧の取得                                                                                 |
+| `GET /api/tasks/:id`                                         | タスク1件の取得                                                                                  |
+| `POST /api/tasks/parse`                                      | テキスト解析のみ(**保存しない**)。`{ text }` を受け取り `TaskDraft` を返す。音声入力の確認UI用   |
+| `POST /api/tasks`                                            | タスク作成。`{ text }` を受け取りパーサーで期限抽出、または構造化済み `{ title, due_date, ... }` |
+| `PATCH /api/tasks/:id`                                       | 更新(完了トグル含む)                                                                             |
+| `DELETE /api/tasks/:id`                                      | 削除                                                                                             |
 
 ### API契約の補足
+
+- **タスク一覧はページングする**: `GET /api/tasks` は `limit` (1〜100、既定値100) と `offset` (0以上、既定値0) を受け付け、`{ tasks, truncated, next_offset }` を返す。`truncated` が `true` のときはレスポンスが上限で打ち切られており、`next_offset` を次の `offset` に指定して続きを取得する。`today` も同じレスポンス形式だが、通常は件数が少ない。並び順は既存のビューごとの順序を維持し、同順位では `id DESC` で安定させる。
 
 - **`completed_at` は `status` と連動させる**: `PATCH` で `status` を `done` にする際は同一UPDATE文の中で
   `completed_at` に現在時刻を設定し、`open` に戻す際は `NULL` にクリアする(クライアントからは送らせない)。
@@ -213,13 +215,13 @@ Worker に MCP サーバー(`/mcp`)を追加し、Claude アプリ・Claude Code
 
 ### MCP ツール (read/write 両対応)
 
-| ツール              | 種別  | 役割                                                                                               |
-| ------------------- | ----- | -------------------------------------------------------------------------------------------------- |
-| `get_daily_summary` | read  | 今日のタスク・期限切れ・Inbox 件数・今日完了分を1回の呼び出しで返す集約ビュー(ブリーフィング用)    |
-| `list_tasks`        | read  | `view=today\|inbox\|all` 相当の一覧取得                                                            |
-| `create_task`       | write | タスク追加。Claude が日本語を解釈し、構造化済み(`title, due_date, due_time, priority, tags`)で渡す |
-| `update_task`       | write | 更新(延期・タイトル変更・完了/未完了トグル)                                                        |
-| `delete_task`       | write | 削除                                                                                               |
+| ツール              | 種別  | 役割                                                                                                                                 |
+| ------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `get_daily_summary` | read  | 今日のタスク・期限切れ・Inbox 件数・今日完了分を1回の呼び出しで返す集約ビュー(ブリーフィング用)                                      |
+| `list_tasks`        | read  | `view=today\|inbox\|all` 相当の一覧取得。`limit` (既定値100) と `offset` を指定でき、`truncated` と `next_offset` で続きの有無を示す |
+| `create_task`       | write | タスク追加。Claude が日本語を解釈し、構造化済み(`title, due_date, due_time, priority, tags`)で渡す                                   |
+| `update_task`       | write | 更新(延期・タイトル変更・完了/未完了トグル)                                                                                          |
+| `delete_task`       | write | 削除                                                                                                                                 |
 
 - JST の「今日」判定は Phase 1 と同様にサーバー側(`lib/time.ts`)で行い、Claude に日付境界を考えさせない
 - `completed_at` と `status` の連動契約(セクション7)は MCP 経由の更新にもそのまま適用する

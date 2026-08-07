@@ -893,6 +893,63 @@ describe('API safety boundaries', () => {
   });
 });
 
+describe('task list pagination', () => {
+  it('bounds all and returns an offset for the next page', async () => {
+    await seedTask({ title: 'ページング1' });
+    await seedTask({ title: 'ページング2' });
+    await seedTask({ title: 'ページング3' });
+
+    const firstResponse = await app.request(
+      '/api/tasks?view=all&limit=2&offset=0',
+      {},
+      env(),
+    );
+    expect(firstResponse.status).toBe(200);
+    const first = (await firstResponse.json()) as {
+      tasks: Array<{ id: number }>;
+      truncated: boolean;
+      next_offset: number | null;
+    };
+    expect(first.tasks).toHaveLength(2);
+    expect(first.truncated).toBe(true);
+    expect(first.next_offset).toBe(2);
+
+    const secondResponse = await app.request(
+      `/api/tasks?view=all&limit=2&offset=${first.next_offset}`,
+      {},
+      env(),
+    );
+    const second = (await secondResponse.json()) as typeof first;
+    expect(secondResponse.status).toBe(200);
+    expect(second.tasks).toHaveLength(1);
+    expect(second.truncated).toBe(false);
+    expect(second.tasks[0].id).not.toBe(first.tasks[0].id);
+  });
+
+  it('bounds inbox and rejects invalid page parameters', async () => {
+    await seedTask({ title: 'Inboxページング1' });
+    await seedTask({ title: 'Inboxページング2' });
+    await seedTask({ title: 'Inboxページング3' });
+
+    const response = await app.request(
+      '/api/tasks?view=inbox&limit=2',
+      {},
+      env(),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      truncated: true,
+      next_offset: 2,
+    });
+
+    const invalid = await app.request('/api/tasks?view=all&limit=0', {}, env());
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual({
+      error: 'limit は 1 以上 100 以下の整数で指定してください',
+    });
+  });
+});
+
 describe('calendar endpoints', () => {
   function calendarEnv(overrides: Record<string, unknown> = {}) {
     const store = new Map<string, string>();

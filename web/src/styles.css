@@ -132,6 +132,31 @@ button {
   display: grid;
   gap: 10px;
 }
+.task-list-more {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin: 18px 0 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+.task-list-more p {
+  margin: 0;
+}
+.task-list-more button {
+  border: 1px solid #c6d4cd;
+  border-radius: 99px;
+  padding: 9px 16px;
+  background: #edf5f0;
+  color: var(--green);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.task-list-more button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
 .kind-switch {
   display: grid;
   grid-template-columns: 1fr 1fr;
