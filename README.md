@@ -28,7 +28,10 @@
 ## 設計
 
 設計の詳細は [docs/DESIGN.md](docs/DESIGN.md) を参照．
-Phase 1 (タスク管理 MVP) は開発済み．次は Phase 4 (MCP サーバー + Claude スキルによる秘書のAI化) を進める．
+Phase 1 のタスク管理、Phase 4 の MCP と朝のブリーフィング、Phase 5 の Google Calendar 連携、
+Phase 6 の繰り返しタスク、Phase 2 初版の体重測定・運動実績は開発・本番反映済み．
+Phase 2 のグラフと習慣トラッキングは、実際の記録が蓄積してから検討する．
+次の未着手領域は Phase 3 の情報収集支援だが、実装範囲はまだ決定していない．
 
 ## ローカル開発とデプロイ
 
