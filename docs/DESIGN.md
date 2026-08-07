@@ -15,7 +15,7 @@
 | Phase   | 内容                                                                                                                                    |
 | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | 1 (MVP) | タスク管理: CRUD + 今日ビュー + 音声入力(音声→タスク化、ルールベースの日付解析)                                                         |
-| 2       | 健康・運動ログ: 体重・運動などの日次記録とグラフ、習慣トラッキング(繰り返しタスクは Phase 6 に分離)                                     |
+| 2       | 健康記録: 体重測定・運動実績の入力と履歴(グラフと習慣トラッキングは初版の対象外、繰り返しタスクは Phase 6 に分離)                       |
 | 3       | 情報収集支援: RSS・ブックマークの収集と閲覧                                                                                             |
 | 4       | 秘書のAI化: MCP サーバーを公開し、Claude 等のAIアシスタントからタスクを読み書き(追加含む)。朝のブリーフィングは Claude 側のスキルで生成 |
 | 5       | Google Calendar 連携: 予定を今日ビューに表示し、時刻つきの入力はタスクではなく予定として登録する(セクション12)                          |
@@ -120,19 +120,8 @@ CREATE INDEX idx_tasks_status_due ON tasks(status, due_date);
 CREATE INDEX idx_tasks_status_scheduled ON tasks(status, scheduled_date);
 ```
 
-Phase 2 で健康・運動を追加する際は、種別つきの汎用ログテーブルを足す:
-
-```sql
-CREATE TABLE logs (
-  id      INTEGER PRIMARY KEY AUTOINCREMENT,
-  date    TEXT NOT NULL,      -- 'YYYY-MM-DD'
-  kind    TEXT NOT NULL,      -- 'weight' | 'sleep' | 'run' | ...
-  value   REAL,
-  unit    TEXT,
-  note    TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-```
+Phase 2 の健康記録は、用途の決まっていない汎用ログにはせず、種別ごとの不変条件を持つ
+`health_entries` として追加する(セクション14)。
 
 ## 6. 画面設計 (Phase 1)
 
@@ -248,7 +237,8 @@ Worker に MCP サーバー(`/mcp`)を追加し、Claude アプリ・Claude Code
   claude.ai に登録する。内容は「`get_daily_summary` を呼び、この構成・トーンで要約する」という指示書
 - 朝は Claude アプリに「今日のブリーフィングして」と話しかける。自動化したくなったら
   claude.ai のスケジュールタスク(定期実行プロンプト+コネクタ)を検討する
-- Phase 2・3 でデータが増えたら、集約ツールとスキルを拡張するだけでブリーフィングに反映できる
+- Phase 2 の健康記録は初版では MCP とブリーフィングに含めない。将来含める場合は
+  専用スコープで再同意を得てから、集約ツールとスキルを拡張する(セクション14)
 
 ### ChatGPT からの接続(オプション)
 
@@ -553,3 +543,125 @@ WHERE の一致条件は**値が古くなることを防ぐためだけに残し
    (`↻` の条件は `repeat_rule !== null || repeat_child_id !== null`。
    完了済みの回はルールを持たないので、後者が無いと履歴で印が消える)
 4. E2E: 繰り返しタスクを作る → 完了 → **リロード** → 次回が今日ビュー/一覧に居る
+
+## 14. Phase 2: 健康記録の設計
+
+方針: **最初は、入力した事実を正しく残して日付順に見返せるところまでに絞る**。
+グラフや目標値は、実際の履歴が溜まり、見たい比較が分かってから追加する。
+
+### 14.1 用語と最小スコープ
+
+ドメイン用語はルートの [CONTEXT.md](../CONTEXT.md) に定義する。初版で扱う健康記録は2種類だけ。
+
+- **体重測定 (Weight Measurement)**: kg 単位の正の数。1日1件に制限せず、朝晩など複数の測定を残せる
+- **運動実績 (Exercise Session)**: 実施済みの運動。種目名は必須、時間(分)とメモは任意
+- **記録対象日 (Occurrence Date)**: 利用者が指定する `YYYY-MM-DD` のローカル暦日。
+  `created_at` から推測しないので、日をまたいだ後でも前日分を正しく記録できる
+
+どちらも予定や目標ではなく、既に測定・実施した事実である。同日の記録は集約・上書きせず、
+それぞれ独立した履歴として保持する。
+
+### 14.2 データモデルと不変条件
+
+用途の決まっていない `kind/value/unit` の汎用ログにはしない。2種類を判別可能な
+`health_entries` にまとめ、種別ごとの値の組み合わせを DB の CHECK 制約でも守る。
+
+```sql
+CREATE TABLE health_entries (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind             TEXT NOT NULL CHECK (kind IN ('weight', 'exercise')),
+  occurred_on      TEXT NOT NULL,              -- 'YYYY-MM-DD'
+  weight_kg        REAL,
+  activity         TEXT,
+  duration_minutes INTEGER,
+  note             TEXT NOT NULL DEFAULT '',
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK (
+    (kind = 'weight' AND weight_kg IS NOT NULL AND weight_kg > 0
+      AND activity IS NULL AND duration_minutes IS NULL)
+    OR
+    (kind = 'exercise' AND weight_kg IS NULL AND activity IS NOT NULL
+      AND length(trim(activity)) > 0
+      AND (duration_minutes IS NULL
+        OR duration_minutes BETWEEN 1 AND 1440))
+  )
+);
+CREATE INDEX idx_health_entries_occurred
+  ON health_entries(occurred_on DESC, id DESC);
+```
+
+日付が実在するか、数値が有限か、文字列長など利用者向けエラーに必要な検証はアプリ側で行い、
+DB 制約は競合や実装漏れを含む不正状態の保存を最後に拒否する。単位は体重を kg、時間を分に固定し、
+変換可能な `unit` 列は持たない。`kind` は作成後に変更できない。種類を間違えた場合は削除して作り直す。
+
+DB モジュールの公開境界は次の4操作に絞る。SQL、制約エラーの解釈、安定した並び順、
+ページングは `src/db/health-entries.ts` の内側に隠し、実 D1 を使うテストをこの境界に対して書く。
+
+- `listHealthEntries({ from?, to?, limit, offset })`
+- `createHealthEntry(input)`
+- `updateHealthEntry(id, input)`
+- `deleteHealthEntry(id)`
+
+作成・更新の入力は `kind` で判別する union とし、体重測定へ運動用フィールドを渡すことや、
+運動実績へ体重を渡すことを型と実行時検証の両方で防ぐ。
+
+### 14.3 JSON API
+
+ブラウザ用 API は既存の Cloudflare Access 配下に置く。タスク API と混ぜず、次の独立した境界にする。
+
+| メソッド/パス                                                  | 役割                                                                                  |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `GET /api/health-entries?from=...&to=...&limit=...&offset=...` | 記録対象日の降順、同日内は `id DESC` で一覧。`from` / `to` は両端を含む任意の絞り込み |
+| `POST /api/health-entries`                                     | 判別可能な入力で体重測定または運動実績を作成                                          |
+| `PATCH /api/health-entries/:id`                                | 記録対象日と、その種類で許された値を修正。`kind` の変更は受け付けない                 |
+| `DELETE /api/health-entries/:id`                               | 指定した健康記録を1件削除                                                             |
+
+一覧は既定50件、最大100件とし、タスク一覧と同じ
+`{ entries, truncated, next_offset }` 形式でページングする。`from > to`、不正な暦日、
+種別と値の不一致は 400、存在しない更新・削除対象は 404 とする。初版には単体取得 API を作らない。
+
+### 14.4 UI と履歴
+
+SPA に `/health` と下部タブ「健康」を追加し、1画面の上から次の順に置く。
+
+1. 体重測定の入力: 記録対象日(既定は今日)、体重 kg、任意メモ
+2. 運動実績の入力: 記録対象日(既定は今日)、種目名、任意の時間(分)とメモ
+3. 履歴: 記録対象日ごとにまとめ、日付降順・同日内は新しい記録順で表示
+
+保存後は入力結果を履歴へ反映する。履歴の各行から修正・削除でき、続きを読み込む操作は
+`next_offset` を使う。初版では「今日」と履歴を別画面に分けず、入力直後の確認と過去の訂正を
+同じ場所で完結させる。
+
+### 14.5 所有権、MCP、ブリーフィング
+
+- 健康記録の持ち主は Cloudflare Access で許可された単一利用者。Phase 1 と同じ単一ユーザー前提なので
+  `user_id` は追加しない
+- **初版の健康記録はブラウザ API だけに公開し、MCP ツールと `get_daily_summary`、
+  朝のブリーフィングには含めない**
+- 既存の `tasks:read` / `tasks:write` / `calendar:read` は健康記録への権限を与えない。
+  将来 MCP から読む場合は `health:read`、書く場合は `health:write` を追加し、既存クライアントに
+  再同意を求めてからツールを公開する
+- HealthKit、Fitbit、Google Fit など外部サービスへの同期・エクスポートも初版では行わない
+
+健康情報はタスクより慎重に扱うべき別のデータ源であり、「既に接続済みだから」という理由で
+同意範囲を暗黙に広げない。
+
+### 14.6 明示的な非目標
+
+- グラフ、増減傾向、目標体重、自己ベスト、ストリーク、カロリー計算
+- 睡眠、血圧、体脂肪率、食事など3種類目以降の健康記録
+- 運動予定、習慣リマインダー、繰り返しタスクとの自動連携
+- ウェアラブルや外部ヘルスサービスからの自動取り込み
+- 医療上の評価、助言、異常値判定
+- 複数利用者、共有、公開プロフィール
+- MCP と朝のブリーフィングからの参照・更新
+
+### Phase 2 初版のタスク分解
+
+実装は、下位の境界が安定してから上位を載せる。
+
+1. `lifegame-160.1`: `health_entries` migration と DB モジュール、実 D1 テスト
+2. `lifegame-160.2`: 共有型・検証と Access 配下の JSON API (1 に依存)
+3. `lifegame-160.3`: `/health` の入力・履歴・修正・削除 UI (2 に依存)
+4. `lifegame-160.4`: ブラウザ E2E と、MCP／ブリーフィングへ健康記録が露出しない契約の回帰確認 (3 に依存)
