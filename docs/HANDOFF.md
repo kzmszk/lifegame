@@ -1,443 +1,123 @@
-# 引き継ぎメモ (最終更新: 2026-08-05)
+# 引き継ぎメモ
 
-Phase 4 (MCP連携)、Phase 5 (Google Calendar 連携)、Phase 6 (繰り返しタスク) が
-本番稼働している状態と、次に着手すべきことをまとめる。
-設計の背景は [DESIGN.md](DESIGN.md)、セットアップ手順は [../README.md](../README.md)、
-Google 側の初期設定は [GCAL_SETUP.md](GCAL_SETUP.md) を参照。
+最終更新: 2026-08-07
 
-## 1. 現在地
+この文書は、次の担当者が作業を再開するための入口である。設計や手順の全文、完了済み作業の履歴は
+ここへ複製しない。作業状態は Beads、設計判断は `docs/DESIGN.md`、セットアップ手順は `README.md`
+を正とする。
 
-Phase 4 のタスク分解のうち **1(MCPサーバー + OAuth)、2(ツール一式)、3(朝のブリーフィング)が完了し、
-本番で動作中**。Claude アプリから `lifegame.tachicoma.com/mcp` に接続してタスクの読み書きができる。
-残るはタスク4(自動ブリーフィング)のみ。
+## 最初に読むもの
 
-| 項目                   | 状態                                                                               |
-| ---------------------- | ---------------------------------------------------------------------------------- |
-| MCPサーバー `/mcp`     | 稼働中(Streamable HTTP, `McpAgent` + Durable Object)                               |
-| OAuth (DCR, PKCE S256) | 稼働中。`workers-oauth-provider` が Worker のエントリポイント                      |
-| ツール5種              | `get_daily_summary` / `list_tasks` / `create_task` / `update_task` / `delete_task` |
-| Cloudflare Access      | 設定済み。`/authorize` は保護、OAuthプロトコル用パスはBypass。JWTをWorker内で検証  |
-| 接続の一覧と切断       | 稼働中。設定画面(ヘッダー右上の `●`)から `/api/connections`                        |
-| ブリーフィングスキル   | claude.ai に登録済み。アプリのチャットで起動を確認した                             |
-| ブラウザE2E            | Playwright 8本。ローカルの `wrangler dev` に対して実行(3.1 に範囲と穴)             |
+1. `AGENTS.md` を読み、`bd prime` を実行する。
+2. `bd ready` と `bd list --status=in_progress` で現在の作業を確認する。
+3. 変更対象に応じて次の文書を読む。
+   - 全体設計・ロードマップ: [`DESIGN.md`](DESIGN.md)
+   - ローカル開発・Cloudflare・OAuth: [`README.md`](../README.md)
+   - Google Calendar の初期設定: [`GCAL_SETUP.md`](GCAL_SETUP.md)
+   - Beads の運用: [`agents/issue-tracker.md`](agents/issue-tracker.md)
 
-Phase 5 (Google Calendar 連携) も **PR #17 をマージして本番稼働中**。`private` カレンダーの
-予定を今日ビューに出し、時刻つきの入力を予定として登録し、`get_daily_summary` に予定と祝日を含める。
+## 現在地
 
-| 項目                     | 状態                                                                    |
-| ------------------------ | ----------------------------------------------------------------------- |
-| 予定の表示               | 稼働中。今日ビューのみ。タスクとは別リクエスト(落ちてもタスクは出る)    |
-| 予定の作成               | 稼働中。クイック追加で時刻が取れたら予定、取れなければタスク            |
-| 予定の更新・削除         | **作らない**。Google カレンダー側で行う(同期・競合・削除伝播を持たない) |
-| `calendar:read` スコープ | 稼働中。これが無い接続には予定関連のキーごと返さない                    |
+- Phase 1（タスク管理）、Phase 4（MCP）、Phase 5（Google Calendar）、Phase 6（繰り返しタスク）は実装済み。
+- MCP は `/mcp` で公開し、OAuth、タスク用ツール5種、接続一覧と切断を実装している。
+- Google Calendar は `private` カレンダーの表示と予定作成だけを担う。更新・削除や双方向同期は行わない。
+- 繰り返しタスクは「完了時に次の1件だけを生成」する。期限と実行予定日は migration 0004 で分離した。
+- migration 0004 は 2026-08-05 22:10:52 UTC に本番 D1 へ適用済みで、対応する Worker version 17 は
+  同日 22:11:12 UTC にデプロイ済み。smoke と Access 認証済みブラウザで確認している
+  （根拠: `lifegame-6bo`）。
+- 本番の繰り返しタスクは、完了時に正しい実行予定日の子を1件だけ生成し、リロード後も保持され、
+  次回タスクで繰り返しを停止できるところまで受け入れ済み（根拠: `lifegame-vtr`）。
+- Phase 4 の自動ブリーフィングは任意。サーバー側の cron や LLM 呼び出しは作らず、必要になった時に
+  クライアント側のスケジュール機能を使う。
 
-Phase 6 (繰り返しタスク) は **PR #20 (バックエンド) と PR #21 (UI / E2E) をマージし、本番稼働中**。
-`repeat_rule` があるなら `status = 'open'` かつ `scheduled_date IS NOT NULL`、期限列はNULLという
-不変条件をCHECK制約で持たせ、完了時にルールを親から消して生成した次回へ渡す。設計は
-[DESIGN.md](DESIGN.md) のセクション13。実装結果とレビューで追加した境界は3.4に書いた。
+作業候補をこの文書へ固定しない。`bd ready` が空なら、次の優先順位を設計相談の起点にする。
 
-| 項目                       | 状態                                                |
-| -------------------------- | --------------------------------------------------- |
-| API (`repeat_rule` の導線) | 稼働中                                              |
-| MCP ツール                 | 稼働中。**新しいスコープは足していない**            |
-| クイック追加のパーサー     | 稼働中。「毎日」「毎週月曜」「毎月15日」「3日ごと」 |
-| 詳細画面・一覧の UI        | 稼働中。設定・停止、複数曜日、`↻`、期限必須のガード |
-| E2E                        | 作成 → 完了 → リロード → 次回のD1永続化まで確認     |
+1. Phase 2（健康・運動ログ、`lifegame-160`）を、まず体重と運動の最小スコープから設計する。
 
-ユニットテストは 142 件、E2E は 8 件。デプロイ前は `npm run check`(format / lint / typecheck /
-test / build)を通す。E2E は `npm run e2e` で別立て(サーバーは設定が自動起動する)。
-CI は PR と main への push で `check` と `e2e` を並走させる。
+## 作業場所と sling
 
-**本番は #21 マージ後をデプロイ済み**。migration 0003 まで適用済みで、適用後も既存タスク6件を
-保持したこと、新しい2列とCHECK制約があることを確認した。デプロイ時の Worker Version ID は
-`e80aa61c-94c3-41fe-9c21-58cd24c8cf14`。`npm run smoke` は全項目成功し、Access認証済みの
-実ブラウザでも今日ビュー・予定・タスク詳細の繰り返しUIを確認、console error は0件だった。
+- コードの正は特定のチェックアウトではなく `origin/main` とする。
+- 人の作業用チェックアウトと Gas Town の agent worktree は分離する。agent は polecat worktree で作業し、
+  人の作業用チェックアウトを直接変更しない。
+- sling の前に、人の作業用チェックアウトに対象ファイルの未コミット変更がないことを確認する。
+  重なる変更があれば、先にコミットまたは stash してから投入する。
+- `.beads/metadata.json`、redirect、role用ファイルなどの Beads/Gas Town 実行時設定はローカル管理とし、
+  プロダクトの変更としてコミットしない。
 
-0003適用前のD1ダンプは
-`/Users/kazu/lifegame-backups/lifegame-pre-0003-20260805.sql` に保存した。一時SQLiteへ読み込んで
-タスク6件と `PRAGMA integrity_check = ok` を確認済み。SHA-256は
-`009275a34106f277324c69bf915cb13489fc82d420d89616be1dfe7f702547e0`。
+## システムの境界
 
-Google の認証情報(`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN`)は
-`wrangler secret` にある。取り直しは [GCAL_SETUP.md](GCAL_SETUP.md) の手順4から。
-未認証では `/` と `/api/*` が 302、`/mcp` が 401、`/.well-known/*` が 200、`/csp-report` は
-POST が 204 で GET は 405。
+- 本番 URL は `https://lifegame.tachicoma.com`。`workers.dev` と Preview URL は無効。
+- Cloudflare Access がブラウザと `/api/*` を保護する。
+- `/mcp`、`/.well-known/*`、`/register`、`/token`、`/csp-report` は OAuth プロトコルのため Bypass。
+  `/authorize` は必ず Access 配下に残す。
+- D1 がタスクと切断記録を、KV が OAuth クライアント・grant・token を保持する。
+- Google の認証情報と `ALLOWED_EMAIL` は Worker secret に置く。値を文書やリポジトリへ記録しない。
 
-外形の確認だけでは JWT 検証の成否は分からない。未認証だと Access が Worker の手前で止めるので、
-`ACCESS_AUD` が違っていても同じ 302 が返る。**判定はブラウザで `/` を開いて画面が出るかどうか**。
+## 壊してはいけない不変条件
 
-## 2. 本番環境の構成
+### 認証と認可
 
-- URL: `https://lifegame.tachicoma.com`(カスタムドメイン。DNSレコードは `custom_domain: true` で自動生成)
-- `workers.dev` と Preview URL は **無効化している**。Access の外に出る入口を作らないため
-- D1 / KV の ID と `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` は `wrangler.jsonc` にコミット済み
-  (識別子でありシークレットではない。リポジトリは非公開)
-- `ALLOWED_EMAIL` は `wrangler secret` に保存。リポジトリには無い
-- Access アプリは2種類
-  - 本体用: ホスト名全体、Action = Allow、Emails に自分のアドレス
-  - Bypass用: `/mcp`、`/.well-known/*`、`/register`、`/token`、`/csp-report`
+- `ACCESS_AUD` は本体用 Access アプリの AUD を使う。Bypass 用 AUD との取り違えは未認証 smoke test では
+  検出できないため、Access 認証済みブラウザで `/` が開けることまで確認する。
+- OAuth スコープの唯一の定義は `src/oauth.ts` の `SUPPORTED_SCOPES`。新しいデータ源を MCP に出す前に、
+  誰が読めるかを決めてからスコープを追加または据え置く。
+- Google Calendar のデータは `calendar:read` がある接続だけに返す。権限がない場合は予定関連キーを
+  空配列にせず、レスポンスから省略する。
+- `/authorize` の CSP では、フォーム送信後の callback 先も `form-action` に許可する。関連テストは
+  `src/oauth.test.ts` と `e2e/consent.spec.ts` にある。
+- 接続切断は競合対策として、revoke 前に D1 の `revoked_grants` へ記録する。refresh と競合して KV の
+  grant や token が残っても、token exchange と MCP ツールの両方で拒否する設計を維持する。
 
-`/authorize` を Bypass に **入れてはいけない**。「クライアント登録は誰でもできるが、承認できるのは
-Access を通った自分だけ」という設計の要になっている。
+### タスクと予定
 
-`ACCESS_AUD` は**本体用アプリ**の AUD タグ。Bypass 用のものを入れても JWT の検証自体は通るため、
-取り違えても気づきにくい(別アプリのトークンを受け入れる状態になる)。AUD タグはアプリの設定画面を
-下にスクロールした「詳細設定」にある。ブラウザの `CF_Authorization` cookie をデコードして
-`aud` を読むのが、実際に届く JWT から取れるぶん確実。
+- `due_*` は期限、`scheduled_*` は実行予定。今日ビューと繰り返しの基点は `scheduled_*` を使う。
+- `repeat_rule` を持てるのは、open かつ `scheduled_date` があり、`due_date` / `due_time` がない行だけ。
+- 繰り返しを完了するとルールを親から消し、生成した子へ移す。この状態を migration 0004 の CHECK 制約で
+  強制している。詳細は `DESIGN.md` のセクション13を参照する。
+- Google Calendar API の一覧取得では `singleEvents=true` と `orderBy=startTime` を維持し、ページを最後まで
+  たどる。予定取得に失敗してもタスク表示を巻き込まない。
 
-## 3. 次にやること
+## 検証と運用
 
-### 3.0 結論と優先順位
-
-**Phase 6まで本番反映が終わったので、次の新規開発は Phase 2 (健康・運動ログ) が本線。**
-ただし、繰り返しタスクはリリース直後なので、先に実運用で1サイクルだけ受け入れ確認する。
-
-1. **直近: Phase 6の本番受け入れ確認**
-   - 本番画面で実際に使う繰り返しタスクを1件作る
-   - 1回完了し、次回が正しい期限で1件だけ生成されることを確認する
-   - 詳細画面で「なし」に戻し、繰り返しを止められることを確認する
-   - 問題が無ければ Phase 6 は完全にクローズ。追加開発はしない
-2. **次の開発: Phase 2の設計を具体化する**
-   - 最初に記録する種類を絞る。推奨は `体重` と `運動` の2つだけ
-   - `logs` テーブル、API、今日の入力UI、履歴表示を最小スコープにする。グラフは履歴が溜まってからでもよい
-   - 健康データを MCP / ブリーフィングに出すなら、実装より先に新しい認可スコープを決める。
-     Phase 5でカレンダーを既存スコープへ漏らした反省を繰り返さない
-3. **任意: Phase 4タスク4の自動ブリーフィング**
-   - 毎朝手で起動するのが不便になった時だけ、claude.ai のスケジュールタスクを設定する
-   - サーバー側のcronやLLM呼び出しは作らない
-4. **保留: Phase 5の改善とPhase 3**
-   - Calendar APIの速度、予定の更新・削除、時刻振り分けは、実害が出た項目だけ直す
-   - Phase 3 (情報収集) は Phase 2 の最小版を使ってから着手する
-
-次のPRを切るなら、いきなり実装せず **「Phase 2で何を記録するか、誰に見せるか」の設計更新**から始める。
-
-### 3.1 ブラウザE2Eの現在地 (追加対応なし)
-
-PR #15 で Playwright を入れ(`e2e/`、`playwright.config.ts`)、PR #16 で当初の目的だった
-承認フローと CSP まで届いた。`npm run e2e` で `wrangler dev` が自動起動し、ローカルの
-D1 と KV に対して8本走る。
-
-`e2e/tasks.spec.ts`(4本):
-
-1. Inbox でタスクを追加 → **リロード** → 詳細 → 削除。リロードを挟むので、React の state ではなく
-   D1 に届いたことを見ている
-2. 完了にすると Inbox から外れる(API 再取得で `status` も確認)
-3. Inbox タスクの詳細で繰り返しを選ぶと、期限を入れるまで保存できない
-4. 繰り返しタスクをUIから作成 → 完了 → **リロード** → 一覧とAPIで次回、親子リンク、D1永続化を確認
-
-これで **PR #7 型の不具合(UIの操作可能性)は拾える**。当時の `＋` が `<span>` でフォームに submit が
-無かった件は、いま同じことをすればテスト1が落ちる。
-
-`e2e/consent.spec.ts`(4本)。DCR でクライアントを登録し、動的ポートに**実物の**コールバック
-サーバーを立てて回す:
-
-5. 承認 → コールバック到達 → `/token` でコード交換
-6. 拒否 → `error=access_denied` と state の保存
-7. 承認CSRF cookie の属性を `context.cookies()` で実測(`Secure` / `HttpOnly` / `SameSite=Lax` / `Path=/`)
-8. 承認画面の CSP ヘッダー(`form-action` の callback オリジン、`frame-ancestors 'none'`)
-
-**`consentCsp` から callback オリジンを外すと4本中3本が落ちる**。うち拒否テストは
-`net::ERR_ABORTED` — ブラウザが実際にリダイレクトを拒否した、5章の「承認画面が無反応」と同じ症状。
-テストが目的のバグを本当に捕まえることは、そうやって確認してある。
-
-E2Eの前提と穴:
-
-- **Access 層は対象外**。`e2e:server` が `AUTH_REQUIRED=false` を渡してバイパスしている
-  (`src/lib/access.ts` の分岐。`.dev.vars` と同じ経路)。`handleAuthorize` は先頭で
-  `getAccessUser` を呼ぶだけなので、これだけで `/authorize` に届く。
-  **ここは service token で塞がないと決めた**(下記)
-- `frame-ancestors` の iframe テストは**意図的に入れていない**。承認画面は同じポリシーを `<meta>`
-  でも出しているが、Chrome は `frame-ancestors` と `report-uri` を meta 経由では無視する
-  (コンソールに警告が出る)。効いているのはヘッダーだけなので、ヘッダーを直接見ている。
-  加えて `X-Frame-Options: DENY` もあるため、iframe が塞がれてもどちらが効いたのか判別できない
-- ローカル D1 と KV は実行をまたいで残るため、タスク名とクライアント名にプロセスごとの ID を混ぜ、
-  `afterEach` がその ID で掃引する。**`testId` はリトライ間でも実行間でも同じ値なので、それだけでは
-  一意にならない**(Codex ボットの指摘。同名タスクが2件になると strict mode で locator が壊れる)
-- 掃引の失敗は**握り潰さず assert する**。次の実行は新しい RUN_ID を持つので、取りこぼした grant を
-  誰も回収しに来ない。DCR クライアントは KV に7日 TTL で残るが、これは溜まるだけで後続を汚さない
-- 期限なしのタスクは「今日」ではなく Inbox に入る(`src/db/tasks.ts` の `listTasks`)。
-  だから最初の2本とも Inbox 起点になっている
-
-#### service token は使わないと決めた (2026-08-05)
-
-Access 層を E2E で踏むには Cloudflare の service token が要る。手順自体は30分程度だが、
-付いてくるものが3つあり、単一ユーザーのアプリに対して割に合わないと判断した。
-
-- **本番の認証コードに service token 用の分岐が要る**。service token の JWT には `email`
-  クレームが無く `common_name` が入るので、`ALLOWED_EMAIL` と突き合わせる現在の
-  `getAccessUser` は通らない。認証層をテストするために認証層を緩めることになる
-- **テストが本番の D1 に書き込む**。いまの E2E はタスクを作って消す
-- **CI に本番の資格情報を置く**ことになる。Access を素通りできる鍵
-
-**JWT 検証のロジック自体は既にユニットテストが押さえている**(`src/routes/api.test.ts` に10本。
-audience 違い、issuer 違い、期限切れ、JWKS 外の鍵、許可外の email、ヘッダーへのフォールバック
-禁止など)。塞げていないのは**設定**のほうで、その設定ミスは毎朝アプリを開けば分かる。
-
-#### 代わりに `npm run smoke` を置いた
-
-デプロイ後の外形チェック(`scripts/smoke.mjs`)。未認証で見える範囲だけを確認する。
+通常の変更は次を通す。
 
 ```sh
-npm run smoke                              # 本番
-npm run smoke -- https://example.workers.dev
+npm run check
+npm run e2e
 ```
 
-拾えるもの: どのパスが Access の内側で、どれが Bypass か。**`/authorize` が Access の内側に
-残っていること**(Bypass に落ちると誰でも承認できる)。OAuth の探索が成立すること。
-広告している `scopes_supported`。
+- `npm run check`: format / lint / typecheck / unit test / build
+- `npm run e2e`: ローカル D1・KV と `wrangler dev` を使うブラウザ E2E。Cloudflare Access 層は対象外
+- `npm run smoke`: デプロイ後に未認証で見える Access / Bypass 境界と OAuth discovery を確認
 
-拾えないもの: **`ACCESS_AUD` の取り違え**。未認証だと Access が Worker の手前で止めるので、
-間違っていても同じ 302 が返る。判定はブラウザで `/` を開くしかない(1章に既述)。
-
-実装で2点、消すと意味が無くなるものがある。**リダイレクトを追わないこと** —
-追うと Access のログイン画面の 200 を拾い、保護されたパスを「到達できる」と報告する。
-**探索の入口は決め打ちしないこと** — `/mcp` の 401 が `WWW-Authenticate` で名指しする
-`resource_metadata` を辿る。`/.well-known/*` はワイルドカードで Bypass しているので、
-1パスを決め打ちすると、ルールがそこだけに狭められた事故を見逃す。
-
-### 3.2 Phase 4 タスク4: 自動ブリーフィング (任意)
-
-claude.ai のスケジュールタスクによる自動化。実運用の手応えを見てからで十分。
-
-### 3.3 Phase 5: 問題が出た項目だけ対応
-
-実装とデプロイは完了。以下は使ってみないと決められないので、しばらく運用してから。
-
-- `get_daily_summary` が Google を2回(予定・祝日)叩くのでブリーフィングが数百ms遅い。
-  気になるなら祝日は日付から計算できるので API を叩かずに済ませられる
-- 予定の更新・削除はアプリに実装していない(Google カレンダー側で行う設計)。
-  実際に不便かどうかは使ってみないと分からない
-- 時刻の有無による振り分けの誤爆。確認ダイアログのトグルで直せるが、
-  既定が頻繁に外れるようならパーサー側を見直す
-- 予定の E2E は無い。Google への実リクエストが要るので、ローカルの `wrangler dev` に
-  対して回している現在の構成には素直に載らない。ユニットテストは fetch をスタブしている
-
-### 3.4 Phase 6 タスク3・4: 完了 (追加対応なし)
-
-PR #21でUIとE2Eをまとめて実装し、本番へデプロイした。
-
-- パーサーは繰り返し表現を通常の曜日解析より先に見る。`毎週月曜` だけでなく、レビューで出た
-  `毎週 月曜` の空白も受け付ける
-- 確認ダイアログと詳細画面の両方に、なし / 毎日 / 毎週(複数曜日) / 毎月(日) / N日ごとを置いた。
-  繰り返しを選んだのに初回実行日が無い場合は、APIエラーにせず画面で理由を出して保存を止める
-- 詳細画面で繰り返しタスクを完了するとルールは子へ移る。親のフォームに古いルールを残すと、
-  その後の保存が「done 行へルールを戻す」更新になって失敗するため、完了レスポンスから繰り返し欄だけ同期する
-- 一覧の `↻` は `repeat_rule !== null || repeat_child_id !== null`。完了した親にもシリーズの印を残す
-- E2Eは繰り返し作成 → 完了 → リロード → 次回生成に加え、詳細画面の期限必須も押さえる
-
-### 3.5 Phase 6 で学んだこと
-
-**不正な状態は「防ぐ」より「表現できなくする」**。最初の実装は繰り返しのルールを完了後も
-行に残していた。すると「done かつ繰り返しかつ次回なし」= 二度と戻ってこない繰り返し、という
-状態が表現可能になり、**同じ不具合が4つの経路から出た**。列ごとにガードを足して塞いでいたが、
-不変条件が増えるたびにガードが増える構造で収束しなかった(レビューで6回連続で新しい指摘が出た)。
-ルールを open な回だけが持つ形に変え、CHECK 制約で強制したら、同じクラスの指摘が止まった。
-**パッチが増え続けたら、それは設計が悪いという信号**。
-
-**CHECK 制約で守れないものが1つだけある**。「書き込みが意図した行に当たったか」は状態の妥当性
-ではない。`repeat_rule` は完了時に子へ移る唯一の列なので、そこを書き換える更新は
-「まだこの行にあるか」を WHERE で確かめている。確かめないと「繰り返しをやめる」が
-既にルールを手放した親に当たって成功を返し、子は回り続ける。
-
-**フェイクの D1 では検証しきれないものがある**。`db.batch()` 内の `last_insert_rowid()` と
-CHECK 制約は、手書きのフェイクでは確かめようがない。**ローカルの実 D1 に対して
-`wrangler dev` 越しに叩いて確認した**。`sqlite_sequence` の件は `sqlite3` で直接再現した。
-
-**同時リクエストの再現は `wrangler dev` では効かない**。`Promise.all` で投げても順に処理されて
-しまい、危ない順序で交錯しない。ガードが発火することはユニットテスト側で押さえるしかない。
-
-## 4. 調べ方(デバッグの入口)
-
-Cloudflare の MCP プラグインがセッションに接続されていれば、Worker一覧・D1へのSQL・KV操作が
-そこから直接できる(デプロイ機能は無い)。`wrangler` でも同じことができる。
+本番 migration の確認では必ず `--remote` を付ける。
 
 ```sh
-npx wrangler tail lifegame --format json    # リクエストとログの監視
 npx wrangler d1 migrations list lifegame --remote
-npx wrangler kv key list --namespace-id <OAUTH_KVのid> --remote
 ```
 
-**テーブルを作り直す migration の前にはバックアップを取る**(0003適用時もこの手順で取った)。
-D1 の Time Travel は過去30日まで戻せるが、戻すのはデータベース全体なので、
-手元にダンプがあるほうが早い。
+テーブルを再作成する migration の前には D1 を export する。migration 0004 はテーブル再作成を含むため、
+未適用ならバックアップ後に適用する。適用・デプロイはユーザーの明示的な許可を得て行う。
 
-```sh
-npx wrangler d1 export lifegame --remote --output backup.sql
-npx wrangler d1 time-travel info lifegame            # 戻せる範囲の確認
-```
+ローカル E2E の注意点:
 
-KV のキーの意味:
+- `playwright.config.ts` と `e2e:server` のホスト・ポートを揃える。
+- `wrangler dev` 起動後にフロントを再ビルドしたら、古い asset manifest を捨てるためサーバーを再起動する。
+- Vitest が `e2e/**/*.spec.ts` を収集しないよう、`vitest.config.ts` の除外設定を維持する。
 
-- `client:*` — DCRで登録されたクライアント(7日TTL)
-- `grant:<email>:*` — 承認済みの権限付与
-- `token:*` — 発行済みアクセストークン(1時間)。リフレッシュトークンは既定30日
+## Suggested skills
 
-切断の記録だけは KV ではなく **D1 の `revoked_grants`** にある。理由は「切断したのに使える」を
-調べるときに効いてくるので下に書く。
+- `beads`: 作業の確認、claim、依存関係、完了記録。
+- `domain-modeling`: Phase 2 の用語・境界・不変条件を設計するとき。
+- `codebase-design`: 新しいデータ源やモジュールのインターフェースを決めるとき。
+- `tdd`: API、DB 制約、再現可能な不具合を実装するとき。
+- `code-review`: PR を仕様とリポジトリ標準の両面で確認するとき。
+- `handoff`: 別セッション、別ディレクトリ、別担当者へ作業途中の文脈を渡すとき。
 
-```sh
-npx wrangler d1 execute lifegame --remote --command "SELECT * FROM revoked_grants"
-```
+## 引き継ぎを更新するとき
 
-### 接続の切断はどう効いているか
-
-ライブラリの `revokeGrant()` はトークンを消してから grant を消す。ところが refresh は
-**読んだ grant を書き戻す**ので、切断と競合すると grant が復活し、新しいトークンも残る。
-この書き込みはライブラリ内部で起きるため、こちら側で直列化できない。
-
-そこで多層で受け止めている。
-
-1. 切断時、`revoke` の**前**に `revoked_grants` へ記録する
-2. `tokenExchangeCallback` が refresh 時にそれを見て `invalid_grant` を投げる(発行させない)
-3. MCPツール5種が毎回それを見て拒否する(**生き残ったトークンでもタスクに触れない**)
-4. 一覧は記録済みの grant を除外する(復活したものを表示しない)
-
-記録が **KV ではなく D1** なのは、KV の書き込みが拠点間で結果整合のため。切断が成功を返した後も
-別拠点では最大1分ほど「記録なし」に見え、閉じたはずの窓がそこで開く。D1 は単一プライマリで
-読み取りレプリカも使っていないので、次のリクエストから見える。行に期限は持たせていない
-(期限付きだと、競合で発行されたトークンより先に切れる恐れがある)。
-
-外形確認は curl が速い。未認証だと `/` と `/api/*` は Access ログインへリダイレクトされ、
-`/mcp` は 401、`/.well-known/*` は 200 が正しい状態。
-
-## 5. ハマったところ(再発しやすい順)
-
-**新しいデータ源を足したら、まず「誰に見せてよいか」を決める (Phase 5 の最大の反省)**
-Google Calendar を `get_daily_summary` に足したとき、認可の側をまったく見直さなかった。
-`tasks:read` しか要求していない既存の接続がカレンダーを読める状態になり、PR #17 のレビューで
-P1 として出た。さらにその修正(`calendar:read` 追加)でも `scopesSupported` の更新を忘れ、
-同意画面が要求外のスコープまで説明する不備も続けて出た。**スコープ一覧は1箇所で定義して
-他所は参照する**(現在は `src/oauth.ts` の `SUPPORTED_SCOPES` が唯一の定義で、
-`index.ts` の `scopesSupported` も同意画面の説明もそこから導出している)。
-Phase 2 で健康データを足すときも同じ順序で考えること。
-
-**Google の OAuth 同意画面を「テスト」のままにする**
-refresh token が **7日で失効**する。1週間後に突然、しかも静かに壊れるので原因に辿り着きにくい。
-「本番環境」に上げれば無期限になる(審査は不要)。[GCAL_SETUP.md](GCAL_SETUP.md) に手順がある。
-
-**Calendar API の `singleEvents` 忘れ**
-付けないと繰り返し予定は親イベント1件しか返らない。毎週のピアノやランチ会が今日ビューから
-消えるが、エラーは出ないので「予定が無い日」に見える。`orderBy=startTime` とセットで必須。
-`maxResults` も総件数ではなく**ページサイズ**なので、`nextPageToken` を追わないと黙って切れる。
-
-**マイグレーションの `--remote` 忘れ**
-付け忘れるとローカルDBに適用され、本番は空のまま。症状は「サーバーでエラーが発生しました」。
-`wrangler d1 migrations list lifegame --remote` で未適用が残っていないか確認する。
-
-**承認画面が無反応になる (CSP)**
-`form-action 'self'` は**フォーム送信後のリダイレクトにも適用される**(Chromeは遮断、Firefoxは
-遮断しない。仕様は未確定)。承認は成功してKVにgrantが残るのに、クライアントへ戻れず画面は無反応。
-再クリックすると使用済みcookieで CSRF に落ち "Invalid consent form" が出るので、
-**CSRFが原因に見えるが実際は違う**。承認画面のCSPを触るときは
-`consent CSP permits the redirect it will issue` のテストを消さないこと。
-
-**`wrangler dev` はリクエストの Host を本番ドメインに書き換える**
-`routes` に `custom_domain` があると、worker から見える `request.url` のホストが
-`lifegame.tachicoma.com` になる。承認画面はそこからフォームの action を組むので、ローカルで
-開いているのに action が本番を指し、`form-action 'self'`(= `127.0.0.1:8787`)と食い違って
-**ブラウザから承認できなくなる**。`e2e:server` の `--host 127.0.0.1:8787` がそれを止めている。
-**ポートまで含める必要がある** — `--host 127.0.0.1` だけだと :80 になり、やはり一致しない。
-`playwright.config.ts` の `baseURL` と手で揃える形なので、ズレたら `openConsent` の
-オリジン比較が原因を名指しして落ちる(黙って waitForURL のタイムアウトになるのを避けるため)。
-
-**`wrangler dev` 起動中にフロントを再ビルドすると画面が真っ白になる**
-アセットのマニフェストが起動時のまま古いので、新しいハッシュ付きJSへのリクエストが
-SPAフォールバックで index.html を返し、`Content-Type: text/html` のためモジュールが実行されない。
-コンソールにエラーも出ないので原因が見えにくい。**再ビルドしたら dev サーバーを再起動する**。
-
-**Playwright のフィクスチャ第1引数は空でも分割代入でなければならない**
-Playwright は引数のソーステキストを検査し、`async (fixtures, use)` と書くとファイルごと拒否して
-**テストが1本も起動しない**。`async ({}, use)` にする必要があるが、今度は oxlint の
-`no-empty-pattern` に当たる。`e2e/consent.spec.ts` では理由付きの
-`oxlint-disable-next-line` で通している。実行しないと出ないエラーなので、Codex に書かせた
-テストは必ず Claude が一度回すこと。
-
-**vitest が Playwright のテストを拾う**
-`vitest run` の既定 include は `**/*.spec.ts` にも当たるので、`e2e/` を置くと `npm test` が
-Playwright のファイルを収集して落ちる。`vitest.config.ts` の `exclude` で切っている。
-このファイルを消すと再発する。
-
-**CI の Playwright キャッシュは `--with-deps` を付けると無意味になる**
-`~/.cache/ms-playwright` に入るのはブラウザバイナリだけで、`--with-deps` が入れる apt の
-システムパッケージはキャッシュの外にある。素直に「ヒット時は `install-deps` を実行」と書くと、
-未キャッシュ時の総コスト 23s のうち大半を占める apt を毎回払うことになり、実測で 28s → 30s と
-**キャッシュがあるほうが遅くなった**。ubuntu-latest には chromium が要るライブラリが既に入っている
-ので、いまは `--with-deps` なしにして 3s まで落としてある(ジョブ全体 67s → 39s)。
-将来ランナー像から必要なライブラリが落ちたら、フレークではなく起動失敗という形で確実に出るので、
-そのときは `--with-deps` に戻す。
-
-**コネクタのURL**
-Claude に登録するURLは末尾に `/mcp` が必要。付け忘れると「サーバーに接続できませんでした」。
-
-**`wrangler d1 create` が設定を書き足す**
-既存のバインディングを見ずに追記するため、`d1_databases` が重複することがある。
-実行後は `wrangler.jsonc` の差分を必ず確認する。
-
-**クライアント名は登録不要**
-DCR により Claude 側が自動で登録する。設定に必要なのはURLだけ。
-
-## 6. 開発フロー
-
-このリポジトリで確立している進め方。
-
-1. 実装は Codex に委譲(`gpt-5.6-terra` / effort `xhigh`。Phase 6 UIで使用。`luna` は選択肢に無かった)
-2. レビューも Codex(`--model gpt-5.6-sol --effort high`)、指摘は Critical/Major/Minor すべて対応
-3. 数行で済む小さな修正は Claude が直接行う
-   (**Playwright の検証は Claude が回す**。理由は下の補足)
-4. 変更は必ず PR にする。GitHub の Codex ボットが自動レビューするので、その指摘にも対応してからマージ。
-   ただし**このファイルの更新は PR にせず main へ直接 push する**(レビューする相手がいないため)
-5. コミット前に `npm run check`(format / lint / typecheck / test / build)。husky が staged 分を見る。
-   CI も PR と main への push で同じものを回す
-
-補足:
-
-- Codex Desktop の managed sandbox では、`git commit` / push / Cloudflare操作は承認付きで実行できた。
-  headless の委譲ジョブでは権限が違う可能性があるため、失敗したら呼び出し側で引き取る
-- `npm run e2e` は通常サンドボックスだと Wrangler のログ書き込みと `127.0.0.1` bind が `EPERM` に
-  なるが、**権限昇格を要求すれば実行できる**。Phase 6では8本すべてCodex Desktopから通した。
-  権限昇格を使えない環境だけ、Claude側で実行する
-- Codex に渡す差分が小さいときは、**`node_modules` を掘るなと明示する**。PR #16 のレビューでは
-  それが無いために `oauth-provider.js` を延々読み返すループに入り、37分走って何も出さずに死んだ。
-  禁止して投げ直したら同じ差分を3分で返した
-- **Claude Code から委譲するときは codex plugin のサブエージェント(`codex:codex-rescue`)を使う**。
-  `codex exec` を Bash から直接叩くとパーミッションのクラシファイアに弾かれる
-- サブエージェントは**ジョブを起動して即座に返るだけ**で、完了を待たない。返ってきた task ID を
-  companion スクリプトに渡して自分で状態を見ること。状態確認・cancel・resume もサブエージェントの
-  権限外なので、すべて呼び出し側で行う
-
-  ```sh
-  node ~/.claude/plugins/cache/openai-codex/codex/<version>/scripts/codex-companion.mjs status <task-id>
-  ```
-
-- Codex ジョブは実行中に静かに死ぬことがある(statusは running のままプロセスだけ消える)。
-  PID の生存確認で監視し、死んでいたら `cancel` してから `--resume-last` で再開する
-
-  **原因が分かった (2026-08-05)。`--background` を付けないと detach されない**。
-  付けたときだけ companion が `spawnDetachedTaskWorker`(`detached: true` + `unref()` +
-  `stdio: "ignore"`)を通り、ログの2行目に `Queued for background execution.` が出て
-  **PPID が 1** になる。付けないと `codex-companion.mjs → /bin/zsh → claude` の孫プロセスのままで、
-  親シェルが消えた瞬間に道連れになり、誰も status ファイルを更新しないので running のまま残る。
-  **サブエージェント(`codex:codex-rescue`)は `--background` を渡さない**ので、
-  委譲経由だけが死んで Bash から直叩きすると死なない、という食い違いが起きる。
-  一定時間で死ぬわけではない(実測 357秒 と 103秒)。103秒のほうは
-  サブエージェントをフォアグラウンドで起動して**2分のクライアント側 Bash タイムアウト**(exit 143)に
-  当たったもの。companion 自体にタイムアウトは無い
-  (`DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240000` は `status --wait` 専用)。
-  **対策**: `codex-companion.mjs task --background ...` を Bash から直接叩く。
-  サブエージェント経由にするなら `run_in_background: true` で起動する
-
-- GitHub の Codex ボットは、**指摘が無いとき PR 本文に `+1` リアクションを付けるだけ**で
-  レビューもコメントも残さない。`gh pr view` の reviews/comments は空のままなので、
-  `gh api repos/<owner>/<repo>/issues/<n>/reactions` を見ないとレビュー済みだと分からない。
-  指摘があるときは逆に、review 本体は定型文だけで**中身はインラインコメント側にある**。
-  `gh api repos/<owner>/<repo>/pulls/<n>/comments` を見ること。PR #15 と #16 で P2 が1件ずつ、
-  PR #21 では初回3件・再レビュー1件が付き、すべて対応した。
-  レビューは PR 作成から数分遅れて来るので、作成直後に空でも「無し」と判断しない
-- **フォーマッタの ignore 対象だけを触るコミットは pre-commit で落ちる**(だった)。oxfmt は
-  渡されたパスが全部 `ignorePatterns` に当たると exit 2 を返し、lint-staged がそれを
-  フォーマット違反として扱う。oxfmt の2エントリに `--no-error-on-unmatched-pattern` を足して解消済み。
-  `.claude/` がまさにこれに当たる
-- **`codex exec` をバックグラウンド(TTY なし)で回すときは `< /dev/null` を付ける**。
-  付けないと、プロンプトを引数で渡していても標準入力からの追加入力を待ち続けて固まる。
-  プロセスは生きたままで、ログは `Reading additional input from stdin...` の1行で止まる。
-  死んだときと見分けがつきにくいので、生存確認だけでなくログが伸びているかも見ること
+- 作業の残件や担当状態は Beads に記録し、この文書には再開方法と判断材料だけを残す。
+- 設計判断は `DESIGN.md` へ置き、この文書から参照する。
+- コマンドや構成は設定ファイルから分かるなら複製せず、環境から読み取る。
+- 秘密情報、個人情報、ローカル専用パスを記録しない。
+- 完了済み PR の時系列や一時的なデバッグ経緯は削り、再発防止に必要な不変条件だけを残す。
