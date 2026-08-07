@@ -1,5 +1,25 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { validDate } from '../lib/task-validation';
+import type {
+  HealthEntry,
+  HealthEntryInput,
+  HealthEntryListPage,
+  HealthEntryUpdateInput,
+} from '../shared/types';
+
+export type {
+  ExerciseSession,
+  ExerciseSessionInput,
+  HealthEntry,
+  HealthEntryCreateInput,
+  HealthEntryInput,
+  HealthEntryListPage,
+  HealthEntryUpdateInput,
+  WeightMeasurement,
+  WeightMeasurementInput,
+  WeightMeasurementUpdateInput,
+  ExerciseSessionUpdateInput,
+} from '../shared/types';
 
 export const DEFAULT_HEALTH_ENTRY_LIST_LIMIT = 50;
 export const MAX_HEALTH_ENTRY_LIST_LIMIT = 100;
@@ -18,77 +38,11 @@ export class HealthEntryConstraintError extends HealthEntryValidationError {
   }
 }
 
-export interface WeightMeasurement {
-  id: number;
-  kind: 'weight';
-  occurred_on: string;
-  weight_kg: number;
-  note: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ExerciseSession {
-  id: number;
-  kind: 'exercise';
-  occurred_on: string;
-  activity: string;
-  duration_minutes: number | null;
-  note: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export type HealthEntry = WeightMeasurement | ExerciseSession;
-
-export interface WeightMeasurementInput {
-  kind: 'weight';
-  occurred_on: string;
-  weight_kg: number;
-  note?: string;
-}
-
-export interface ExerciseSessionInput {
-  kind: 'exercise';
-  occurred_on: string;
-  activity: string;
-  duration_minutes?: number | null;
-  note?: string;
-}
-
-export type HealthEntryInput = WeightMeasurementInput | ExerciseSessionInput;
-export type HealthEntryCreateInput = HealthEntryInput;
-
-export interface WeightMeasurementUpdateInput {
-  kind: 'weight';
-  occurred_on?: string;
-  weight_kg?: number;
-  note?: string;
-}
-
-export interface ExerciseSessionUpdateInput {
-  kind: 'exercise';
-  occurred_on?: string;
-  activity?: string;
-  duration_minutes?: number | null;
-  note?: string;
-}
-
-export type HealthEntryUpdateInput =
-  | WeightMeasurementUpdateInput
-  | ExerciseSessionUpdateInput;
-
 export interface HealthEntryListOptions {
   from?: string;
   to?: string;
   limit?: number;
   offset?: number;
-}
-
-export interface HealthEntryListPage {
-  entries: HealthEntry[];
-  truncated: boolean;
-  next_offset: number | null;
 }
 
 interface HealthEntryRow {

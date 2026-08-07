@@ -139,6 +139,80 @@ export interface TaskResponse {
   task: Task;
 }
 
+export interface WeightMeasurement {
+  id: number;
+  kind: 'weight';
+  occurred_on: string;
+  weight_kg: number;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExerciseSession {
+  id: number;
+  kind: 'exercise';
+  occurred_on: string;
+  activity: string;
+  duration_minutes: number | null;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type HealthEntry = WeightMeasurement | ExerciseSession;
+
+export interface WeightMeasurementInput {
+  kind: 'weight';
+  occurred_on: string;
+  weight_kg: number;
+  note?: string;
+}
+
+export interface ExerciseSessionInput {
+  kind: 'exercise';
+  occurred_on: string;
+  activity: string;
+  duration_minutes?: number | null;
+  note?: string;
+}
+
+export type HealthEntryInput = WeightMeasurementInput | ExerciseSessionInput;
+export type HealthEntryCreateInput = HealthEntryInput;
+
+export interface WeightMeasurementUpdateInput {
+  kind: 'weight';
+  occurred_on?: string;
+  weight_kg?: number;
+  note?: string;
+}
+
+export interface ExerciseSessionUpdateInput {
+  kind: 'exercise';
+  occurred_on?: string;
+  activity?: string;
+  duration_minutes?: number | null;
+  note?: string;
+}
+
+export type HealthEntryUpdateInput =
+  | WeightMeasurementUpdateInput
+  | ExerciseSessionUpdateInput;
+
+export interface HealthEntryListPage {
+  entries: HealthEntry[];
+  /** True when more health entries exist after this page. */
+  truncated: boolean;
+  /** Offset to use for the next request, or null when this is the last page. */
+  next_offset: number | null;
+}
+
+export type HealthEntriesResponse = HealthEntryListPage;
+
+export interface HealthEntryResponse {
+  entry: HealthEntry;
+}
+
 export interface ErrorResponse {
   error: string;
 }

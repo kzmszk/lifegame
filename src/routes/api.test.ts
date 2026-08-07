@@ -950,6 +950,219 @@ describe('task list pagination', () => {
   });
 });
 
+describe('health entry API', () => {
+  async function requestHealth(
+    path: string,
+    init: RequestInit = {},
+    requestEnv: Record<string, unknown> = {},
+  ): Promise<Response> {
+    return app.request(path, init, env(requestEnv));
+  }
+
+  async function createHealthEntry(body: Record<string, unknown>) {
+    return requestHealth('/api/health-entries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('creates both kinds and lists inclusive date filters with pagination', async () => {
+    const older = await createHealthEntry({
+      kind: 'exercise',
+      occurred_on: '2026-08-06',
+      activity: '散歩',
+    });
+    const newer = await createHealthEntry({
+      kind: 'weight',
+      occurred_on: '2026-08-07',
+      weight_kg: 68.4,
+      note: '朝',
+    });
+    await createHealthEntry({
+      kind: 'exercise',
+      occurred_on: '2026-08-07',
+      activity: '筋トレ',
+      duration_minutes: 30,
+    });
+    expect(older.status).toBe(201);
+    expect(newer.status).toBe(201);
+
+    const firstResponse = await requestHealth(
+      '/api/health-entries?from=2026-08-06&to=2026-08-07&limit=2&offset=0',
+    );
+    expect(firstResponse.status).toBe(200);
+    const first = await firstResponse.json();
+    expect(first).toMatchObject({
+      entries: [
+        { kind: 'exercise', occurred_on: '2026-08-07', activity: '筋トレ' },
+        { kind: 'weight', occurred_on: '2026-08-07', weight_kg: 68.4 },
+      ],
+      truncated: true,
+      next_offset: 2,
+    });
+
+    const secondResponse = await requestHealth(
+      '/api/health-entries?from=2026-08-06&to=2026-08-07&limit=2&offset=2',
+    );
+    expect(secondResponse.status).toBe(200);
+    expect(await secondResponse.json()).toEqual({
+      entries: [
+        expect.objectContaining({
+          kind: 'exercise',
+          occurred_on: '2026-08-06',
+          activity: '散歩',
+        }),
+      ],
+      truncated: false,
+      next_offset: null,
+    });
+  });
+
+  it('updates kind-specific fields without changing kind and deletes entries', async () => {
+    const created = await createHealthEntry({
+      kind: 'weight',
+      occurred_on: '2026-08-01',
+      weight_kg: 70,
+    });
+    const { entry } = (await created.json()) as { entry: { id: number } };
+
+    const corrected = await requestHealth(`/api/health-entries/${entry.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'weight',
+        occurred_on: '2026-08-02',
+        weight_kg: 69.5,
+        note: '訂正',
+      }),
+    });
+    expect(corrected.status).toBe(200);
+    expect(await corrected.json()).toMatchObject({
+      entry: {
+        id: entry.id,
+        kind: 'weight',
+        occurred_on: '2026-08-02',
+        weight_kg: 69.5,
+        note: '訂正',
+      },
+    });
+
+    const changedKind = await requestHealth(`/api/health-entries/${entry.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'exercise', activity: '誤入力' }),
+    });
+    expect(changedKind.status).toBe(400);
+
+    const deleted = await requestHealth(`/api/health-entries/${entry.id}`, {
+      method: 'DELETE',
+    });
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toEqual({ ok: true });
+    const deletedAgain = await requestHealth(
+      `/api/health-entries/${entry.id}`,
+      { method: 'DELETE' },
+    );
+    expect(deletedAgain.status).toBe(404);
+  });
+
+  it('rejects invalid dates, ranges, pagination, numbers, and kind fields', async () => {
+    const invalidRequests: Array<Promise<Response>> = [
+      requestHealth('/api/health-entries?from=2026-02-30'),
+      requestHealth('/api/health-entries?from=2026-08-08&to=2026-08-07'),
+      requestHealth('/api/health-entries?limit=0'),
+      requestHealth('/api/health-entries?limit=101'),
+      requestHealth('/api/health-entries?offset=-1'),
+      createHealthEntry({
+        kind: 'weight',
+        occurred_on: '2026-02-30',
+        weight_kg: 68,
+      }),
+      createHealthEntry({
+        kind: 'weight',
+        occurred_on: '2026-08-07',
+        weight_kg: 0,
+      }),
+      createHealthEntry({
+        kind: 'weight',
+        occurred_on: '2026-08-07',
+        weight_kg: Number.NaN,
+      }),
+      createHealthEntry({
+        kind: 'exercise',
+        occurred_on: '2026-08-07',
+        activity: '散歩',
+        duration_minutes: 0,
+      }),
+      createHealthEntry({
+        kind: 'exercise',
+        occurred_on: '2026-08-07',
+        activity: '散歩',
+        duration_minutes: 1441,
+      }),
+      createHealthEntry({
+        kind: 'weight',
+        occurred_on: '2026-08-07',
+        weight_kg: 68,
+        activity: '混在',
+      }),
+      createHealthEntry({
+        kind: 'exercise',
+        occurred_on: '2026-08-07',
+        activity: '散歩',
+        weight_kg: 68,
+      }),
+    ];
+
+    for (const response of await Promise.all(invalidRequests)) {
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it('rejects malformed IDs and reports missing targets', async () => {
+    for (const path of [
+      '/api/health-entries/',
+      '/api/health-entries/not-a-number',
+      '/api/health-entries/0',
+    ]) {
+      const patch = await requestHealth(path, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'weight', weight_kg: 68 }),
+      });
+      expect(patch.status).toBe(400);
+
+      const deleted = await requestHealth(path, { method: 'DELETE' });
+      expect(deleted.status).toBe(400);
+    }
+
+    const missingPatch = await requestHealth('/api/health-entries/999999', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'weight', weight_kg: 68 }),
+    });
+    expect(missingPatch.status).toBe(404);
+
+    const missingDelete = await requestHealth('/api/health-entries/999999', {
+      method: 'DELETE',
+    });
+    expect(missingDelete.status).toBe(404);
+  });
+
+  it('keeps individual reads out of the browser API and requires Access', async () => {
+    const unsupported = await requestHealth('/api/health-entries/1');
+    expect(unsupported.status).toBe(405);
+    expect(unsupported.headers.get('allow')).toBe('PATCH, DELETE');
+
+    const response = await app.request('/api/health-entries', {}, accessEnv());
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: 'Cloudflare Access のユーザー情報がありません',
+    });
+  });
+});
+
 describe('calendar endpoints', () => {
   function calendarEnv(overrides: Record<string, unknown> = {}) {
     const store = new Map<string, string>();

@@ -10,6 +10,17 @@ import {
   updateTask,
   type TaskView,
 } from '../db/tasks';
+import {
+  createHealthEntry,
+  DEFAULT_HEALTH_ENTRY_LIST_LIMIT,
+  deleteHealthEntry,
+  HealthEntryValidationError,
+  listHealthEntries,
+  MAX_HEALTH_ENTRY_LIST_LIMIT,
+  updateHealthEntry,
+  type HealthEntryCreateInput,
+  type HealthEntryUpdateInput,
+} from '../db/health-entries';
 import { parse } from '../lib/parse';
 import {
   RepeatRuleError,
@@ -43,6 +54,7 @@ import type {
   CalendarEventsResponse,
   Connection,
   ErrorResponse,
+  HealthEntryResponse,
   TaskDraft,
 } from '../shared/types';
 import { DEFAULT_TASK_LIST_LIMIT, MAX_TASK_LIST_LIMIT } from '../shared/types';
@@ -235,6 +247,94 @@ api.delete('/tasks/:id', async (c) => {
     : error(c, 'タスクが見つかりません', 404);
 });
 
+api.get('/health-entries', async (c) => {
+  const limit = parseTaskListInteger(
+    c.req.query('limit'),
+    DEFAULT_HEALTH_ENTRY_LIST_LIMIT,
+    1,
+    MAX_HEALTH_ENTRY_LIST_LIMIT,
+  );
+  if (limit === null) {
+    return error(
+      c,
+      `limit は 1 以上 ${MAX_HEALTH_ENTRY_LIST_LIMIT} 以下の整数で指定してください`,
+      400,
+    );
+  }
+  const offset = parseTaskListInteger(c.req.query('offset'), 0, 0);
+  if (offset === null)
+    return error(c, 'offset は 0 以上の整数で指定してください', 400);
+
+  try {
+    const page = await listHealthEntries(c.env.DB, {
+      ...(c.req.query('from') === undefined
+        ? {}
+        : { from: c.req.query('from') }),
+      ...(c.req.query('to') === undefined ? {} : { to: c.req.query('to') }),
+      limit,
+      offset,
+    });
+    return c.json(page);
+  } catch (thrown) {
+    if (thrown instanceof HealthEntryValidationError)
+      return error(c, thrown.message, 400);
+    throw thrown;
+  }
+});
+
+api.post('/health-entries', async (c) => {
+  const body = await readBody(c);
+  if (!body) return error(c, 'JSON オブジェクトを指定してください', 400);
+
+  try {
+    const entry = await createHealthEntry(
+      c.env.DB,
+      body as unknown as HealthEntryCreateInput,
+    );
+    return c.json<HealthEntryResponse>({ entry }, 201);
+  } catch (thrown) {
+    if (thrown instanceof HealthEntryValidationError)
+      return error(c, thrown.message, 400);
+    throw thrown;
+  }
+});
+
+async function patchHealthEntry(c: ApiContext) {
+  const id = parseId(c.req.param('id') ?? '');
+  if (!id) return error(c, '健康記録IDが不正です', 400);
+  const body = await readBody(c);
+  if (!body) return error(c, 'JSON オブジェクトを指定してください', 400);
+
+  try {
+    const entry = await updateHealthEntry(
+      c.env.DB,
+      id,
+      body as unknown as HealthEntryUpdateInput,
+    );
+    return entry
+      ? c.json<HealthEntryResponse>({ entry })
+      : error(c, '健康記録が見つかりません', 404);
+  } catch (thrown) {
+    if (thrown instanceof HealthEntryValidationError)
+      return error(c, thrown.message, 400);
+    throw thrown;
+  }
+}
+
+async function removeHealthEntry(c: ApiContext) {
+  const id = parseId(c.req.param('id') ?? '');
+  if (!id) return error(c, '健康記録IDが不正です', 400);
+  const deleted = await deleteHealthEntry(c.env.DB, id);
+  return deleted
+    ? c.json({ ok: true })
+    : error(c, '健康記録が見つかりません', 404);
+}
+
+api.patch('/health-entries/:id', patchHealthEntry);
+api.patch('/health-entries/', patchHealthEntry);
+api.delete('/health-entries/:id', removeHealthEntry);
+api.delete('/health-entries/', removeHealthEntry);
+
 function calendarError(c: ApiContext, thrown: unknown) {
   if (!(thrown instanceof GoogleCalendarError)) throw thrown;
   console.warn(`Google Calendar 呼び出しに失敗: ${thrown.message}`);
@@ -422,8 +522,10 @@ function knownApiPath(path: string): boolean {
     path === '/tasks/parse' ||
     path === '/connections' ||
     path === '/connections/' ||
+    path === '/health-entries' ||
+    path === '/health-entries/' ||
     path === '/calendar/events' ||
-    /^\/(tasks|connections)\/[^/]+$/.test(path)
+    /^\/(tasks|connections|health-entries)\/[^/]+$/.test(path)
   );
 }
 
@@ -431,6 +533,8 @@ const staticPathMethods: Record<string, string> = {
   '/tasks': 'GET, POST',
   '/tasks/parse': 'POST',
   '/connections': 'GET',
+  '/health-entries': 'GET, POST',
+  '/health-entries/': 'GET, POST',
   '/calendar/events': 'GET, POST',
 };
 
@@ -442,7 +546,11 @@ api.all('*', (c) => {
     c.header(
       'Allow',
       staticPathMethods[path] ??
-        (path.startsWith('/connections/') ? 'DELETE' : 'GET, PATCH, DELETE'),
+        (path.startsWith('/connections/')
+          ? 'DELETE'
+          : path.startsWith('/health-entries/')
+            ? 'PATCH, DELETE'
+            : 'GET, PATCH, DELETE'),
     );
     return error(c, 'このAPIメソッドは対応していません', 405);
   }
