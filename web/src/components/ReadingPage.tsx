@@ -12,6 +12,7 @@ import {
   updateSavedLink,
 } from '../api';
 import { ErrorState, Loading } from './feedback';
+import type { SharedLinkDraft } from '../share-target';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -20,11 +21,16 @@ function errorMessage(error: unknown, fallback: string): string {
 interface SavedLinkFormProps {
   onSaved: (result: SavedLinkCreateResponse) => Promise<void>;
   onError?: (message: string) => void;
+  initialDraft?: SharedLinkDraft;
 }
 
-export function SavedLinkForm({ onSaved, onError }: SavedLinkFormProps) {
-  const [url, setUrl] = useState('');
-  const [title, setTitle] = useState('');
+export function SavedLinkForm({
+  onSaved,
+  onError,
+  initialDraft,
+}: SavedLinkFormProps) {
+  const [url, setUrl] = useState(initialDraft?.url ?? '');
+  const [title, setTitle] = useState(initialDraft?.title ?? '');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -353,8 +359,10 @@ export function SavedLinkList({
 
 export function ReadingPage({
   onError,
+  initialDraft,
 }: {
   onError?: (message: string) => void;
+  initialDraft?: SharedLinkDraft;
 }) {
   const [view, setView] = useState<SavedLinkView>('reading');
   const [links, setLinks] = useState<SavedLink[]>([]);
@@ -418,6 +426,7 @@ export function ReadingPage({
       </header>
       <SavedLinkForm
         onError={onError}
+        initialDraft={initialDraft}
         onSaved={async () => {
           if (view !== 'reading') setView('reading');
           else await load('reading');

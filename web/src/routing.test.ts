@@ -17,6 +17,17 @@ describe('frontend routing helpers', () => {
     expect(routeForPath('/reading')).toEqual({ kind: 'reading' });
   });
 
+  it('turns a Web Share Target request into a reading-list draft', () => {
+    expect(
+      routeForPath(
+        '/reading/share?title=%E5%85%B1%E6%9C%89%E8%A8%98%E4%BA%8B&text=https%3A%2F%2Fexample.com%2Fshared',
+      ),
+    ).toEqual({
+      kind: 'reading',
+      shared: { url: 'https://example.com/shared', title: '共有記事' },
+    });
+  });
+
   it('reads a valid source view from a task detail query', () => {
     expect(routeForPath('/tasks/42?from=inbox')).toEqual({
       kind: 'detail',

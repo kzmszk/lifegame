@@ -1,10 +1,12 @@
 import type { TaskView } from '../../src/shared/types';
+import { parseShareTarget } from './share-target';
+import type { SharedLinkDraft } from './share-target';
 
 export type Route =
   | { kind: 'list'; view: TaskView }
   | { kind: 'detail'; id: number; from: TaskView }
   | { kind: 'health' }
-  | { kind: 'reading' }
+  | { kind: 'reading'; shared?: SharedLinkDraft }
   | { kind: 'settings' };
 
 function isTaskView(value: string | null): value is TaskView {
@@ -23,6 +25,12 @@ export function routeForPath(pathWithSearch: string): Route {
     };
   }
   if (pathname === '/health') return { kind: 'health' };
+  if (pathname === '/reading/share') {
+    return {
+      kind: 'reading',
+      shared: parseShareTarget(new URLSearchParams(search)),
+    };
+  }
   if (pathname === '/reading') return { kind: 'reading' };
   if (pathname === '/settings') return { kind: 'settings' };
   if (pathname === '/inbox') return { kind: 'list', view: 'inbox' };

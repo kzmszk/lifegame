@@ -28,6 +28,7 @@ import { TaskList } from './components/TaskList';
 import { useToast } from './hooks/useToast';
 import { pathForView, routeForPath } from './routing';
 import type { Route } from './routing';
+import { clearShareTargetQuery } from './share-target';
 
 interface PendingDraft {
   draft: TaskDraft;
@@ -78,6 +79,12 @@ export default function App() {
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  useEffect(() => {
+    if (path.split('?')[0] === '/reading/share') {
+      clearShareTargetQuery(window.history);
+    }
+  }, [path]);
 
   const loadList = useCallback(async (view: TaskView, offset = 0) => {
     const generation = ++listRequestGeneration.current;
@@ -302,7 +309,7 @@ export default function App() {
         ) : route.kind === 'health' ? (
           <HealthPage onError={showToast} />
         ) : route.kind === 'reading' ? (
-          <ReadingPage onError={showToast} />
+          <ReadingPage onError={showToast} initialDraft={route.shared} />
         ) : (
           <ConnectionSettings
             onBack={() => navigate('/')}

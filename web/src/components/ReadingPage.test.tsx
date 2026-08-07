@@ -27,6 +27,22 @@ describe('読むリストのコンポーネント', () => {
     expect(html).toContain('読むリストに保存');
   });
 
+  it('Android 共有の URL と題名を自動保存せず確認フォームへ入れる', () => {
+    const html = renderToStaticMarkup(
+      <SavedLinkForm
+        initialDraft={{
+          url: 'https://example.com/shared',
+          title: '共有された題名',
+        }}
+        onSaved={() => Promise.resolve()}
+      />,
+    );
+
+    expect(html).toContain('value="https://example.com/shared"');
+    expect(html).toContain('value="共有された題名"');
+    expect(html).toContain('<form');
+  });
+
   it('安全な外部リンクと編集・アーカイブ・削除操作を表示する', () => {
     const html = renderToStaticMarkup(
       <SavedLinkList
