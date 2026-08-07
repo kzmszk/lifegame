@@ -10,13 +10,13 @@ import {
 import { tokyoDayBounds } from '../lib/time';
 import { fieldsFromBody, validateFields } from '../lib/task-validation';
 import {
-  normalizeRepeatRule,
   RepeatRuleError,
   validateScheduleState,
   validateRepeatState,
 } from '../lib/repeat';
+import { normalizeTaskCreateInput, TaskInputError } from '../lib/task-input';
 import { listCalendarEvents, listHolidays } from '../lib/google-calendar';
-import type { CalendarEvent, Task, TaskCreateInput } from '../shared/types';
+import type { CalendarEvent, Task } from '../shared/types';
 import type { Env } from '../env';
 
 export interface DailySummary {
@@ -180,24 +180,14 @@ export async function createTaskForMcp(
 ): Promise<Task> {
   const body = omitUndefined(record(input));
   assertValidFields(body);
-  if (typeof body.title !== 'string' || body.title.trim() === '') {
-    throw new McpToolError('title は必須です');
+  let createInput: ReturnType<typeof normalizeTaskCreateInput>;
+  try {
+    createInput = normalizeTaskCreateInput(body);
+  } catch (thrown) {
+    if (thrown instanceof TaskInputError)
+      throw new McpToolError(thrown.message);
+    throw thrown;
   }
-
-  const createInput: Required<Pick<TaskCreateInput, 'title'>> &
-    Omit<TaskCreateInput, 'title'> = {
-    title: body.title.trim(),
-    note: typeof body.note === 'string' ? body.note : '',
-    due_date: typeof body.due_date === 'string' ? body.due_date : null,
-    due_time: typeof body.due_time === 'string' ? body.due_time : null,
-    scheduled_date:
-      typeof body.scheduled_date === 'string' ? body.scheduled_date : null,
-    scheduled_time:
-      typeof body.scheduled_time === 'string' ? body.scheduled_time : null,
-    priority: typeof body.priority === 'number' ? body.priority : 0,
-    tags: typeof body.tags === 'string' ? body.tags : '',
-    repeat_rule: normalizeRepeatRule(body.repeat_rule) ?? null,
-  };
   const scheduleError = validateScheduleState(
     createInput.scheduled_date ?? null,
     createInput.scheduled_time ?? null,
