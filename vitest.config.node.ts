@@ -3,7 +3,7 @@ import { configDefaults, defineProject } from 'vitest/config';
 export default defineProject({
   test: {
     name: 'node',
-    include: ['src/**/*.test.ts', 'web/src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'web/src/**/*.test.{ts,tsx}'],
     // Database and route tests use the Workers project below. Playwright owns
     // e2e/. Without this, Vitest's default include picks up its *.spec.ts files.
     exclude: [

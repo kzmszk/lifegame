@@ -132,6 +132,174 @@ button {
   display: grid;
   gap: 10px;
 }
+.health-forms {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 34px;
+}
+.health-form-card,
+.health-history {
+  padding: 18px;
+  background: rgba(255, 253, 248, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  box-shadow: 0 10px 30px rgba(77, 64, 43, 0.04);
+}
+.health-form-heading,
+.health-history-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.health-form-heading h2,
+.health-history-heading h2,
+.health-history h2 {
+  margin: 3px 0 0;
+  color: var(--ink);
+  font-size: 1.3rem;
+  letter-spacing: -0.04em;
+}
+.health-form-heading .eyebrow,
+.health-history-heading .eyebrow {
+  margin: 0;
+}
+.health-form {
+  display: grid;
+  gap: 13px;
+}
+.health-form label,
+.health-entry-editor label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+.health-form input,
+.health-form textarea,
+.health-entry-editor input,
+.health-entry-editor textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  outline: none;
+  background: var(--paper);
+  color: var(--ink);
+}
+.health-form input:focus,
+.health-form textarea:focus,
+.health-entry-editor input:focus,
+.health-entry-editor textarea:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(31, 92, 85, 0.1);
+}
+.form-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.health-history {
+  display: grid;
+  gap: 16px;
+}
+.health-history-count {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.health-history-groups {
+  display: grid;
+  gap: 21px;
+}
+.health-history-group {
+  display: grid;
+  gap: 8px;
+}
+.health-history-group h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+.health-entry-list {
+  display: grid;
+  gap: 8px;
+}
+.health-entry-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--paper);
+}
+.health-entry-content {
+  min-width: 0;
+}
+.health-entry-kind {
+  margin-bottom: 3px;
+  color: var(--green);
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+.health-entry-content strong {
+  color: var(--ink);
+  font-size: 0.94rem;
+}
+.health-entry-content p {
+  overflow: hidden;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.health-entry-actions .button {
+  padding: 8px 11px;
+  font-size: 0.75rem;
+}
+.health-delete-button {
+  border: 0;
+  padding: 8px 4px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 0.75rem;
+}
+.health-entry-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.health-entry-editor {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 11px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+.health-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.health-editor-actions .button {
+  padding: 9px 12px;
+  font-size: 0.78rem;
+}
+.health-history-more {
+  margin-bottom: 0;
+}
 .task-list-more {
   display: grid;
   justify-items: center;

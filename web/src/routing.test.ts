@@ -9,6 +9,10 @@ describe('frontend routing helpers', () => {
     });
   });
 
+  it('recognizes the health entry screen', () => {
+    expect(routeForPath('/health')).toEqual({ kind: 'health' });
+  });
+
   it('reads a valid source view from a task detail query', () => {
     expect(routeForPath('/tasks/42?from=inbox')).toEqual({
       kind: 'detail',

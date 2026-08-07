@@ -3,6 +3,7 @@ import type { TaskView } from '../../src/shared/types';
 export type Route =
   | { kind: 'list'; view: TaskView }
   | { kind: 'detail'; id: number; from: TaskView }
+  | { kind: 'health' }
   | { kind: 'settings' };
 
 function isTaskView(value: string | null): value is TaskView {
@@ -20,6 +21,7 @@ export function routeForPath(pathWithSearch: string): Route {
       from: isTaskView(from) ? from : 'today',
     };
   }
+  if (pathname === '/health') return { kind: 'health' };
   if (pathname === '/settings') return { kind: 'settings' };
   if (pathname === '/inbox') return { kind: 'list', view: 'inbox' };
   if (pathname === '/all') return { kind: 'list', view: 'all' };

@@ -5,6 +5,10 @@ import type {
   CalendarEventsResponse,
   ConnectionsResponse,
   ErrorResponse,
+  HealthEntriesResponse,
+  HealthEntry,
+  HealthEntryCreateInput,
+  HealthEntryUpdateInput,
   Task,
   TaskCreateInput,
   TaskDraft,
@@ -101,6 +105,54 @@ export async function fetchConnections(): Promise<ConnectionsResponse> {
 
 export async function removeConnection(id: string): Promise<void> {
   await request<{ ok: true }>(`/api/connections/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export interface HealthEntriesQuery {
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function fetchHealthEntries(
+  options: HealthEntriesQuery = {},
+): Promise<HealthEntriesResponse> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(options)) {
+    if (value !== undefined) query.set(key, String(value));
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request<HealthEntriesResponse>(`/api/health-entries${suffix}`);
+}
+
+export async function createHealthEntry(
+  input: HealthEntryCreateInput,
+): Promise<HealthEntry> {
+  const response = await request<{ entry: HealthEntry }>(
+    '/api/health-entries',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+  return response.entry;
+}
+
+export async function updateHealthEntry(
+  id: number,
+  input: HealthEntryUpdateInput,
+): Promise<HealthEntry> {
+  const response = await request<{ entry: HealthEntry }>(
+    `/api/health-entries/${id}`,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  );
+  return response.entry;
+}
+
+export async function deleteHealthEntry(id: number): Promise<void> {
+  await request<{ ok: true }>(`/api/health-entries/${id}`, {
     method: 'DELETE',
   });
 }

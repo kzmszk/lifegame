@@ -20,6 +20,7 @@ import { ConnectionSettings } from './components/ConnectionSettings';
 import { DraftDialog } from './components/DraftDialog';
 import type { DraftKind } from './components/DraftDialog';
 import { ErrorState, Loading } from './components/feedback';
+import { HealthPage } from './components/HealthPage';
 import { QuickAdd } from './components/QuickAdd';
 import { TaskDetail } from './components/TaskDetail';
 import { TaskList } from './components/TaskList';
@@ -297,6 +298,8 @@ export default function App() {
             onDeleted={() => navigate(pathForView(route.from))}
             onError={showToast}
           />
+        ) : route.kind === 'health' ? (
+          <HealthPage onError={showToast} />
         ) : (
           <ConnectionSettings
             onBack={() => navigate('/')}
@@ -304,7 +307,9 @@ export default function App() {
           />
         )}
       </main>
-      {route.kind === 'list' && <BottomTabs view={route.view} />}
+      {(route.kind === 'list' || route.kind === 'health') && (
+        <BottomTabs view={route.kind === 'health' ? 'health' : route.view} />
+      )}
       {draft && (
         <DraftDialog
           draft={draft.draft}
