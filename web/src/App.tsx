@@ -8,7 +8,6 @@ import type {
   TaskStatus,
   TaskView,
 } from '../../src/shared/types';
-import type { RepeatRule } from '../../src/lib/repeat';
 import {
   createCalendarEvent,
   createTask,
@@ -21,11 +20,15 @@ import {
   removeTask,
   updateTask,
 } from './api';
-
-type Route =
-  | { kind: 'list'; view: TaskView }
-  | { kind: 'detail'; id: number; from: TaskView }
-  | { kind: 'settings' };
+import {
+  clampInteger,
+  moveDeadlineToSchedule,
+  repeatFormValue,
+  repeatRuleFor,
+} from './repeat-form';
+import type { RepeatFormValue, RepeatFrequency } from './repeat-form';
+import { pathForView, routeForPath } from './routing';
+import type { Route } from './routing';
 
 /** Where a confirmed draft is written: the task list, or Google Calendar. */
 type DraftKind = 'task' | 'event';
@@ -34,15 +37,6 @@ interface PendingDraft {
   draft: TaskDraft;
   /** Voice drafts get a different hint, since misheard text is the usual worry. */
   source: 'voice' | 'text';
-}
-
-type RepeatFrequency = 'none' | 'daily' | 'weekly' | 'monthly' | 'every';
-
-interface RepeatFormValue {
-  frequency: RepeatFrequency;
-  weeklyDays: number[];
-  monthlyDay: number;
-  everyDays: number;
 }
 
 const WEEKDAY_OPTIONS = [
@@ -54,106 +48,6 @@ const WEEKDAY_OPTIONS = [
   { value: 5, label: '金' },
   { value: 6, label: '土' },
 ] as const;
-
-function clampInteger(value: number, minimum: number, maximum: number): number {
-  if (!Number.isFinite(value)) return minimum;
-  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
-}
-
-function repeatFormValue(rule: RepeatRule | null): RepeatFormValue {
-  if (rule === 'daily') {
-    return { frequency: 'daily', weeklyDays: [1], monthlyDay: 1, everyDays: 1 };
-  }
-  if (rule?.startsWith('weekly:')) {
-    const weeklyDays = rule
-      .slice('weekly:'.length)
-      .split(',')
-      .map(Number)
-      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
-      .sort((left, right) => left - right);
-    return {
-      frequency: 'weekly',
-      weeklyDays: weeklyDays.length > 0 ? weeklyDays : [1],
-      monthlyDay: 1,
-      everyDays: 1,
-    };
-  }
-  if (rule?.startsWith('monthly:')) {
-    return {
-      frequency: 'monthly',
-      weeklyDays: [1],
-      monthlyDay: clampInteger(Number(rule.slice('monthly:'.length)), 1, 31),
-      everyDays: 1,
-    };
-  }
-  if (rule?.startsWith('every:')) {
-    return {
-      frequency: 'every',
-      weeklyDays: [1],
-      monthlyDay: 1,
-      everyDays: clampInteger(Number(rule.slice('every:'.length)), 1, 366),
-    };
-  }
-  return { frequency: 'none', weeklyDays: [1], monthlyDay: 1, everyDays: 1 };
-}
-
-function repeatRuleFor(value: RepeatFormValue): RepeatRule | null {
-  if (value.frequency === 'none') return null;
-  if (value.frequency === 'daily') return 'daily';
-  if (value.frequency === 'weekly') {
-    const days = [...new Set(value.weeklyDays)]
-      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
-      .sort((left, right) => left - right);
-    return days.length > 0 ? (`weekly:${days.join(',')}` as RepeatRule) : null;
-  }
-  if (value.frequency === 'monthly') {
-    return `monthly:${clampInteger(value.monthlyDay, 1, 31)}` as RepeatRule;
-  }
-  return `every:${clampInteger(value.everyDays, 1, 366)}` as RepeatRule;
-}
-
-/** Recurrence operates on an execution schedule, never on a deadline. */
-function moveDeadlineToSchedule<
-  T extends Pick<
-    TaskDraft,
-    'due_date' | 'due_time' | 'scheduled_date' | 'scheduled_time'
-  >,
->(value: T): T {
-  const hasSchedule =
-    value.scheduled_date !== null || value.scheduled_time !== null;
-  return {
-    ...value,
-    scheduled_date: hasSchedule ? value.scheduled_date : value.due_date,
-    scheduled_time: hasSchedule ? value.scheduled_time : value.due_time,
-    due_date: null,
-    due_time: null,
-  };
-}
-
-function isTaskView(value: string | null): value is TaskView {
-  return value === 'today' || value === 'inbox' || value === 'all';
-}
-
-function routeForPath(pathWithSearch: string): Route {
-  const [pathname, search = ''] = pathWithSearch.split('?');
-  const detail = pathname.match(/^\/tasks\/(\d+)$/);
-  if (detail) {
-    const from = new URLSearchParams(search).get('from');
-    return {
-      kind: 'detail',
-      id: Number(detail[1]),
-      from: isTaskView(from) ? from : 'today',
-    };
-  }
-  if (pathname === '/settings') return { kind: 'settings' };
-  if (pathname === '/inbox') return { kind: 'list', view: 'inbox' };
-  if (pathname === '/all') return { kind: 'list', view: 'all' };
-  return { kind: 'list', view: 'today' };
-}
-
-function pathForView(view: TaskView): string {
-  return view === 'today' ? '/' : `/${view}`;
-}
 
 function useToast(): [string | null, (message: string) => void] {
   const [toast, setToast] = useState<string | null>(null);
