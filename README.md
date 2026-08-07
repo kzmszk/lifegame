@@ -41,8 +41,10 @@ npx wrangler d1 create lifegame
 # wrangler.jsonc の database_id を上記コマンドの ID に置換
 npx wrangler d1 migrations apply lifegame --remote
 npx wrangler secret put ALLOWED_EMAIL
-npx wrangler deploy
+npm run deploy
 ```
+
+デプロイは `npm run deploy` を使う。このコマンドは `wrangler deploy` の成功後に `npm run smoke` を実行し、境界の期待値から外れた場合は終了コード1で手順全体を失敗させる。未認証の smoke では `ACCESS_AUD` の取り違えを検出できないため、デプロイ後に Access 認証を通したブラウザでもJWT検証を確認する。
 
 `wrangler.jsonc` の `vars` にある `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` のプレースホルダは、デプロイ前に置き換える。
 `ACCESS_TEAM_DOMAIN` はCloudflare Zero Trustのチームドメイン（Access JWTの `iss`、通常は
@@ -87,7 +89,7 @@ npx wrangler kv namespace create OAUTH_KV
 # wrangler.jsonc の OAUTH_KV.id に上記コマンドのIDを設定
 # wrangler.jsonc の routes[0].pattern を自分のカスタムドメインに設定
 npx wrangler d1 migrations apply lifegame --remote
-npx wrangler deploy
+npm run deploy
 ```
 
 Cloudflare Zero TrustのAccessアプリでは、MCPのOAuthプロトコルをAccessのログイン画面で

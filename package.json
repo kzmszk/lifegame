@@ -15,6 +15,7 @@
     "lint:fix": "oxlint . --fix --deny-warnings",
     "prepare": "husky",
     "smoke": "node scripts/smoke.mjs",
+    "deploy": "wrangler deploy && npm run smoke",
     "test": "vitest run",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
