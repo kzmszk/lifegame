@@ -2,7 +2,7 @@ import type { RepeatRule } from './repeat';
 import { normalizeRepeatRule } from './repeat';
 import { parse } from './parse';
 import { hasOwn, parseStatus } from './task-validation';
-import type { TaskCreateInput, TaskDraft, TaskStatus } from '../shared/types';
+import type { TaskDraft, TaskStatus } from '../shared/types';
 
 export class TaskInputError extends Error {
   constructor(message: string) {
@@ -101,6 +101,3 @@ export function normalizeTaskCreateInput(
   }
   return fromStructuredInput(body);
 }
-
-export type TaskCreateData = Required<Pick<TaskCreateInput, 'title'>> &
-  Omit<TaskCreateInput, 'title'>;

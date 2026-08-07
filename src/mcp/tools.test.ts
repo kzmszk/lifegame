@@ -18,6 +18,7 @@ import {
   REPEAT_DEADLINE_ERROR,
   REPEAT_SCHEDULED_DATE_ERROR,
 } from '../lib/repeat';
+import { normalizeTaskCreateInput } from '../lib/task-input';
 import type { Env } from '../env';
 
 interface Row {
@@ -376,6 +377,25 @@ describe('MCP tool handlers', () => {
       scheduled_time: '10:00',
       priority: 1,
     });
+  });
+
+  it('uses the shared creation normalization contract', async () => {
+    const db = new FakeD1([]) as unknown as D1Database;
+    const input = {
+      title: '  作成  ',
+      note: 'メモ',
+      due_date: '2026-08-03',
+      due_time: '09:30',
+      scheduled_date: '2026-08-04',
+      scheduled_time: '10:00',
+      priority: 1,
+      tags: '家事',
+      status: 'done',
+    } as const;
+
+    const created = await createTaskForMcp(db, input);
+
+    expect(created).toMatchObject(normalizeTaskCreateInput(input));
   });
 
   it('applies the shared validation contract to every writable field', async () => {

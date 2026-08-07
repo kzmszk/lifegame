@@ -18,6 +18,15 @@ describe('normalizeTaskCreateInput', () => {
     expect(fromText.status).toBe('open');
   });
 
+  it('keeps an explicit status consistent across both input paths', () => {
+    expect(
+      normalizeTaskCreateInput({ text: 'ゴミ出し', status: 'done' }, now),
+    ).toMatchObject({ status: 'done' });
+    expect(
+      normalizeTaskCreateInput({ title: 'ゴミ出し', status: 'done' }),
+    ).toMatchObject({ status: 'done' });
+  });
+
   it('lets explicit fields correct parsed values', () => {
     expect(
       normalizeTaskCreateInput(

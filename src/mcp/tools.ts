@@ -195,7 +195,7 @@ export async function createTaskForMcp(
   if (scheduleError) throw new McpToolError(scheduleError);
   const repeatError = validateRepeatState(
     createInput.repeat_rule ?? null,
-    typeof body.status === 'string' && body.status === 'done' ? 'done' : 'open',
+    createInput.status,
     createInput.scheduled_date ?? null,
     createInput.due_date ?? null,
     createInput.due_time ?? null,

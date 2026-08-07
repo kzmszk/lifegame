@@ -2,6 +2,7 @@ import { env as workerEnv } from 'cloudflare:workers';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { app } from '../app';
+import * as access from '../lib/access';
 import {
   REPEAT_DEADLINE_ERROR,
   REPEAT_OPEN_ONLY_ERROR,
@@ -626,6 +627,27 @@ describe('API safety boundaries', () => {
       limit: 100,
       cursor: 'page-2',
     });
+  });
+
+  it('verifies Access once while handling a connection request', async () => {
+    stubAccessJwks();
+    const token = await accessJwt();
+    const getAccessUser = vi.spyOn(access, 'getAccessUser');
+
+    const response = await app.request(
+      '/api/connections',
+      {
+        headers: { 'Cf-Access-Jwt-Assertion': token },
+      },
+      accessEnv({
+        OAUTH_PROVIDER: {
+          listUserGrants: vi.fn().mockResolvedValue({ items: [] }),
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(getAccessUser).toHaveBeenCalledTimes(1);
   });
 
   it('hides a grant that a raced refresh wrote back after it was revoked', async () => {
