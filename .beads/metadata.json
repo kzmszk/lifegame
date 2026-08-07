@@ -1,7 +1,0 @@
-{
-  "database": "dolt",
-  "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "lifegame",
-  "project_id": "cc1981a1-9cba-4187-809c-f539b6be43af"
-}
