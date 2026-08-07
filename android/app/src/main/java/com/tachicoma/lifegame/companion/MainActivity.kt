@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openHealthConnectSettings() {
         runCatching {
-            startActivity(Intent(HealthConnectClient.getHealthConnectSettingsAction()))
+            startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS))
         }
     }
 }
