@@ -58,6 +58,15 @@ const checks = [
     why: 'Bypass 済み。違反レポートの受け口',
   },
   { path: '/csp-report', expect: 405, why: 'GET は受け付けない' },
+  {
+    // Play とHealth Connect の権限画面から未認証で開ける必要がある唯一のページ。
+    // not_found_handling が SPA なので、asset が消えていても 200 で SPA shell が
+    // 返る。ステータスだけでは検出できないため本文の見出しまで確認する。
+    path: '/privacy',
+    expect: 200,
+    contains: 'Health Connect から読み取るデータと利用目的',
+    why: 'Bypass 済み。ここが 302 だと Play 審査と権限画面の導線が同時に壊れる',
+  },
 ];
 
 /** リダイレクトを追うと Access のログイン画面の 200 を拾ってしまう。 */
@@ -76,10 +85,21 @@ for (const check of checks) {
   const label = `${method} ${check.path}`;
   try {
     const response = await status(check.path, method);
-    const ok = response.status === check.expect;
+    const statusOk = response.status === check.expect;
+    const bodyOk =
+      !check.contains ||
+      (statusOk && (await response.text()).includes(check.contains));
+    const ok = statusOk && bodyOk;
     if (!ok) failures += 1;
+    // 本文の確認は status が期待どおりのときだけ意味がある。302 のときに
+    // 「本文がない」と出すと、Bypass 未設定を asset の欠落と読み違える。
+    const detail = !statusOk
+      ? `${response.status} (期待 ${check.expect})`
+      : bodyOk
+        ? `${response.status} (期待 ${check.expect})`
+        : `200 だが本文に「${check.contains}」がない`;
     console.log(
-      `${ok ? '✓' : '✗'} ${label.padEnd(44)} ${response.status} (期待 ${check.expect}) — ${check.why}`,
+      `${ok ? '✓' : '✗'} ${label.padEnd(44)} ${detail} — ${check.why}`,
     );
   } catch (error) {
     failures += 1;
