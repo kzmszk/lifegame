@@ -50,6 +50,10 @@
 - Cloudflare Access がブラウザと `/api/*` を保護する。
 - `/mcp`、`/.well-known/*`、`/register`、`/token`、`/csp-report` は OAuth プロトコルのため Bypass。
   `/authorize` は必ず Access 配下に残す。
+- `/privacy` と `/privacy/*` は公開プライバシーポリシーのため、OAuth 用とは**別の** Access アプリケーション
+  として Bypass する。Play listing・Health Connect の権限画面・アプリ内が同じ URL を指す。実体は
+  `web/public/privacy/index.html`（`public/` は vite の出力先で gitignore 済み）。`ACCESS_AUD` は本体用
+  アプリの AUD のまま変えない。詳細は `docs/adr/0001-health-connect-privacy-policy-hosting.md`。
 - D1 がタスクと切断記録を、KV が OAuth クライアント・grant・token を保持する。
 - Google の認証情報と `ALLOWED_EMAIL` は Worker secret に置く。値を文書やリポジトリへ記録しない。
 

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6f1e8" />
+    <meta
+      name="description"
+      content="lifegame 健康確認が Health Connect から読み取るデータと、その取り扱いについて"
+    />
+    <meta name="robots" content="index, follow" />
+    <title>プライバシーポリシー | lifegame 健康確認</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f1e8;
+        --fg: #2b2620;
+        --muted: #6b6152;
+        --rule: #ddd3c2;
+        --accent: #7a5c2e;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c1a17;
+          --fg: #ece5da;
+          --muted: #a99e8d;
+          --rule: #3b362e;
+          --accent: #d7b483;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 2rem 1.25rem 4rem;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP',
+          'Yu Gothic', sans-serif;
+        line-height: 1.85;
+        font-size: 16px;
+        -webkit-text-size-adjust: 100%;
+      }
+      main {
+        max-width: 42rem;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.5rem;
+        line-height: 1.5;
+        margin: 0 0 0.5rem;
+      }
+      h2 {
+        font-size: 1.125rem;
+        margin: 2.5rem 0 0.75rem;
+        padding-bottom: 0.35rem;
+        border-bottom: 1px solid var(--rule);
+      }
+      p,
+      li {
+        margin: 0.75rem 0;
+      }
+      ul {
+        padding-left: 1.25rem;
+      }
+      dl {
+        margin: 0.75rem 0;
+      }
+      dt {
+        font-weight: 600;
+        margin-top: 0.75rem;
+      }
+      dd {
+        margin: 0.1rem 0 0;
+      }
+      .lead {
+        color: var(--muted);
+      }
+      /* 権限画面から開くのは主に電話なので、横スクロールする表にしない。 */
+      .types dt {
+        border-top: 1px solid var(--rule);
+        padding-top: 0.75rem;
+      }
+      .types dd {
+        margin-left: 0;
+      }
+      .perm {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.85em;
+        font-weight: 400;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      a {
+        color: var(--accent);
+      }
+      code {
+        font-size: 0.95em;
+      }
+      footer {
+        margin-top: 3rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--rule);
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>プライバシーポリシー</h1>
+      <p class="lead">
+        Android アプリ「lifegame 健康確認」および lifegame
+        （<code>lifegame.tachicoma.com</code>）における、Health Connect
+        から読み取ったデータの取り扱いを説明します。この文書が全文の正であり、アプリ内および
+        Health Connect の権限説明画面に表示される要約はこの文書の抜粋です。
+      </p>
+
+      <h2>1. 提供者と連絡先</h2>
+      <dl>
+        <dt>アプリ名</dt>
+        <dd>lifegame 健康確認（Android／Health Connect 連携アプリ）</dd>
+        <dt>提供者</dt>
+        <dd>lifegame 開発者（個人開発。<code>tachicoma.com</code> の運営者）</dd>
+        <dt>連絡先</dt>
+        <dd>
+          <a href="mailto:privacy@tachicoma.com">privacy@tachicoma.com</a>
+          （受信専用。このアドレスから送信することはありません）
+        </dd>
+      </dl>
+
+      <h2>2. Health Connect から読み取るデータと利用目的</h2>
+      <p>
+        利用者が Health Connect
+        の権限画面で明示的に許可したものだけを、読み取り専用で参照します。読み取るのは次の
+        3 種類だけです。Health Connect への書き込みは行いません。
+      </p>
+      <dl class="types">
+        <dt>体重測定 <span class="perm">READ_WEIGHT</span></dt>
+        <dd>
+          直近 30
+          日の記録件数と、最新の測定日時・体重を端末の画面に表示するため。
+        </dd>
+        <dt>運動実績 <span class="perm">READ_EXERCISE</span></dt>
+        <dd>
+          直近 30
+          日の記録件数と、最新の運動の名称・開始日時・所要時間を端末の画面に表示するため。
+        </dd>
+        <dt>睡眠実績 <span class="perm">READ_SLEEP</span></dt>
+        <dd>
+          直近 30
+          日の記録件数と、最新の睡眠の開始日時・長さを端末の画面に表示するため。
+        </dd>
+      </dl>
+      <p>
+        上記以外の Health Connect
+        のデータ型（心拍数、位置情報、経路、栄養など）は要求も取得もしません。過去データ全体の読み取り権限（履歴データ）や、バックグラウンドでの読み取り権限も要求しません。
+      </p>
+
+      <h2>3. データの送信先</h2>
+      <p>
+        <strong
+          >Health Connect から読み取ったデータを端末の外へ送信することはありません。</strong
+        >
+        サーバーへのアップロード、クラウドへのバックアップ、他のアプリへの受け渡しのいずれも行いません。本アプリはネットワーク通信の権限（INTERNET）自体を持ちません。
+      </p>
+
+      <h2>4. 保存と保持期間</h2>
+      <p>
+        読み取った内容は<strong>画面に表示している間だけ端末のメモリ上に置き、保存しません。</strong>
+        ファイル、データベース、端末のバックアップのいずれにも書き出しません。アプリを終了すると内容は残らず、次に開いたときは
+        Health Connect から改めて読み直します。したがって、本アプリ側に削除すべき保存データはありません。
+      </p>
+
+      <h2>5. 第三者提供・広告・分析</h2>
+      <ul>
+        <li>読み取ったデータを第三者へ提供・販売することはありません。</li>
+        <li>広告の配信や広告の最適化には一切利用しません。</li>
+        <li>
+          利用状況の分析、行動計測、クラッシュレポートの送信は行いません。第三者製の分析
+          SDK や広告 SDK を組み込んでいません。
+        </li>
+      </ul>
+
+      <h2>6. 読み取りの停止とデータの削除</h2>
+      <p>読み取りはいつでも利用者の操作で止められます。</p>
+      <ul>
+        <li>
+          <strong>権限の取り消し</strong>: 端末の「設定」→「Health
+          Connect」→「アプリの権限」で「lifegame
+          健康確認」を選び、許可を取り消します。取り消した時点で本アプリからは一切読み取れなくなります。
+        </li>
+        <li>
+          <strong>アプリの削除</strong>:
+          本アプリをアンインストールすると、権限も同時に失われます。前述のとおり本アプリはデータを保存しないため、削除すべきデータは端末に残りません。
+        </li>
+        <li>
+          <strong>健康データそのものの削除</strong>: Health Connect
+          に記録されている健康データの削除は、Health Connect
+          アプリ側で行います。本アプリは削除機能を持ちません（読み取り専用のため）。
+        </li>
+      </ul>
+
+      <h2>7. お問い合わせ</h2>
+      <p>
+        本ポリシーおよびデータの取り扱いについてのお問い合わせは
+        <a href="mailto:privacy@tachicoma.com">privacy@tachicoma.com</a>
+        までご連絡ください。
+      </p>
+
+      <h2>8. 本ポリシーの改定</h2>
+      <p>
+        取り扱いを変更する場合は、変更を反映した時点で本ページを更新し、最終更新日を改めます。とくに、データを端末の外へ送信する機能を追加する場合は、その機能を公開するのと同時に本ページを改定します。過去の版は
+        lifegame のリポジトリの変更履歴に残ります。
+      </p>
+
+      <footer>
+        <p>最終更新日: 2026年8月8日</p>
+      </footer>
+    </main>
+  </body>
+</html>
