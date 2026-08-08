@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">lifegame Health</string>
+
+    <string name="read_only_notice">Health Connect のデータを読み取って、この端末の中だけで表示します。外部への送信は行いません。</string>
+
+    <string name="provider_unavailable">この端末では Health Connect を利用できません。Health Connect をインストールしてから、もう一度開いてください。</string>
+    <string name="provider_update_required">Health Connect の更新が必要です。更新してから、もう一度開いてください。</string>
+    <string name="open_health_connect_listing">Health Connect を開く</string>
+
+    <string name="permissions_required">体重・運動・睡眠を表示するには、Health Connect の読み取り権限が必要です。</string>
+    <string name="permissions_partially_granted">%1$s の読み取り権限がありません。</string>
+    <string name="grant_permissions">読み取り権限を許可する</string>
+
+    <string name="section_title">%1$s（直近30日・%2$d件）</string>
+    <string name="section_empty">直近30日のデータはありません。</string>
+    <string name="refresh">再読み込み</string>
+
+    <string name="read_failed">読み取りに失敗しました: %1$s</string>
+    <string name="retry">再試行</string>
+
+    <string name="rationale_title">健康データの利用について</string>
+    <string name="rationale_body">このアプリは Health Connect から %1$s の記録を読み取ります。読み取ったデータは、この端末の画面に表示するためだけに使います。</string>
+    <string name="rationale_no_transfer">データの書き込み、外部サーバーへの送信、バックグラウンドでの同期は行いません。</string>
+</resources>

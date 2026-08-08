@@ -99,3 +99,48 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  # The Android companion is a separate Gradle build under android/. It shares no
+  # code with the Node app, so it gets its own job rather than steps on `check`.
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      # AGP 9 requires JDK 17+; the runner image ships several, so pin one
+      # rather than inheriting whatever happens to be default.
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: android
+
+      # compileSdk 37 is newer than what the runner image preinstalls, so fetch
+      # it explicitly. The action also accepts the SDK licences non-interactively.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-37.0 build-tools;37.0.0
+
+      - name: Test and assemble
+        run: ./gradlew :core:test :app:assembleDebug --no-daemon
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-report
+          path: android/core/build/reports/tests/test/
+          retention-days: 7
