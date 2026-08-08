@@ -61,6 +61,8 @@ dolt-pprof/
 backup/
 issues.jsonl
 interactions.jsonl
+.auto-import-issues.jsonl
+migration-backups/
 
 # Per-project environment file (Dolt connection config, GH#2520)
 .env
