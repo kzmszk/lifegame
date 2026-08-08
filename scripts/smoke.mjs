@@ -59,11 +59,15 @@ const checks = [
   },
   { path: '/csp-report', expect: 405, why: 'GET は受け付けない' },
   {
-    // Play とHealth Connect の権限画面から未認証で開ける必要がある唯一のページ。
+    // Play と Health Connect の権限画面から未認証で開ける必要がある唯一のページ。
+    // 実体が privacy/index.html なので、Assets の html_handling が /privacy を
+    // /privacy/ へ 307 で正規化する。Bypass が /privacy だけで /privacy/* を
+    // 落とすと、この飛び先が Access の内側に残って導線が切れる。追いかける。
     // not_found_handling が SPA なので、asset が消えていても 200 で SPA shell が
     // 返る。ステータスだけでは検出できないため本文の見出しまで確認する。
     path: '/privacy',
     expect: 200,
+    followSameHost: true,
     contains: 'Health Connect から読み取るデータと利用目的',
     why: 'Bypass 済み。ここが 302 だと Play 審査と権限画面の導線が同時に壊れる',
   },
@@ -78,13 +82,54 @@ async function status(path, method) {
   return response;
 }
 
+// 自ホスト内のリダイレクトだけを追う。Assets の正規化(/privacy → /privacy/)は
+// 追わないと本文まで辿り着けないが、Access のログインは別ホストへ飛ばすので、
+// ホストが変わった時点で「Bypass が効いていない」と言い切れる。
+const MAX_HOPS = 3;
+
+async function followWithinHost(path, method) {
+  let current = path;
+  for (let hop = 0; hop <= MAX_HOPS; hop += 1) {
+    const response = await status(current, method);
+    const location = response.headers.get('location');
+    if (response.status < 300 || response.status >= 400 || !location) {
+      return { response, path: current };
+    }
+    const next = new URL(location, `${baseUrl}${current}`);
+    if (!next.href.startsWith(`${baseUrl}/`)) {
+      return { response, path: current, leftHost: next.origin };
+    }
+    current = next.href.slice(baseUrl.length);
+  }
+  return { response: null, path: current, tooManyHops: true };
+}
+
 let failures = 0;
 
 for (const check of checks) {
   const method = check.method ?? 'GET';
   const label = `${method} ${check.path}`;
   try {
-    const response = await status(check.path, method);
+    const hopped = check.followSameHost
+      ? await followWithinHost(check.path, method)
+      : { response: await status(check.path, method), path: check.path };
+    const { response, leftHost, tooManyHops } = hopped;
+    // リダイレクトを追った先を報告する。/privacy が落ちたときに、どのパスの
+    // 話をしているのかが出ていないと Bypass の対象を絞り込めない。
+    const via = hopped.path === check.path ? '' : ` (→ ${hopped.path})`;
+
+    if (leftHost || tooManyHops) {
+      failures += 1;
+      console.log(
+        `✗ ${label.padEnd(44)} ${
+          leftHost
+            ? `${response.status} で ${leftHost} へ飛ばされた。Bypass が効いていない`
+            : 'リダイレクトが多すぎる'
+        } — ${check.why}`,
+      );
+      continue;
+    }
+
     const statusOk = response.status === check.expect;
     const bodyOk =
       !check.contains ||
@@ -99,7 +144,7 @@ for (const check of checks) {
         ? `${response.status} (期待 ${check.expect})`
         : `200 だが本文に「${check.contains}」がない`;
     console.log(
-      `${ok ? '✓' : '✗'} ${label.padEnd(44)} ${detail} — ${check.why}`,
+      `${ok ? '✓' : '✗'} ${(label + via).padEnd(44)} ${detail} — ${check.why}`,
     );
   } catch (error) {
     failures += 1;

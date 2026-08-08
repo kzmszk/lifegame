@@ -126,6 +126,11 @@ Health Connect と Play Data safety の要求を満たすため、最低限こ�
 
 - `not_found_handling` が `single-page-application` なので、`/privacy/*` の存在しない path は 404 では
   なく SPA shell が 200 で返る。smoke test は 200 だけでなく**本文の目印文字列**まで確認する。
+- 実体が `privacy/index.html` なので、Assets の `html_handling`（既定の `auto-trailing-slash`）が
+  **`/privacy` を `/privacy/` へ 307 で正規化する**。正規 URL である `/privacy` を叩いて 200 が返る
+  わけではない。Bypass に `/privacy/*` を含めるのはこの飛び先のためで、`/privacy` だけにすると
+  リダイレクト先が Access の内側に残り導線が切れる。smoke test は**自ホスト内のホップだけ**追う
+  （別ホストへ飛んだら Access のログインなので、そこで失敗させる）。
 - Bypass を足したあと、`/` と `/api/*` が 302 のままであることを smoke で再確認する。path を広げすぎる
   と本体が露出する。
 - service worker は現状 pass-through なのでキャッシュ干渉はない。将来キャッシュを入れるなら
