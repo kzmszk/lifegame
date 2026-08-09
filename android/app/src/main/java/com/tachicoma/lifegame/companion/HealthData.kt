@@ -16,6 +16,23 @@ object HealthPermissions {
     val all: Set<String> = setOf(READ_WEIGHT, READ_EXERCISE, READ_SLEEP)
 }
 
+/**
+ * ADR 0001: the public page is the single source of truth for the privacy policy.
+ *
+ * The rationale screen only repeats the three points below, so that editing the details of the
+ * full text never leaves the on-device wording saying something different. Both the rationale
+ * screen and the main screen open the same URL.
+ */
+object PrivacyPolicy {
+    const val URL = "https://lifegame.tachicoma.com/privacy"
+
+    val summary: List<String> = listOf(
+        "読み取るのは体重測定・運動実績・睡眠実績の3種類だけです。",
+        "読み取った内容を端末の外へ送信しません。",
+        "第三者提供・広告・分析には使いません。",
+    )
+}
+
 enum class HealthDataType(
     val label: String,
     val permission: String,
