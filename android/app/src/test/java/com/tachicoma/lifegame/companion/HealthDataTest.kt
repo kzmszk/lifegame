@@ -23,6 +23,26 @@ class HealthDataTest {
         )
     }
 
+    // ADR 0001: 権限画面の要約は3点に固定する。ここが増えると全文との乖離が始まる。
+    @Test
+    fun `the on-device summary stays at the three points fixed by ADR 0001`() {
+        assertEquals(
+            listOf(
+                "読み取るのは体重測定・運動実績・睡眠実績の3種類だけです。",
+                "読み取った内容を端末の外へ送信しません。",
+                "第三者提供・広告・分析には使いません。",
+            ),
+            PrivacyPolicy.summary,
+        )
+    }
+
+    // 正規 URL は ADR 0001 が決めた1本だけ。Access の Bypass も smoke test も
+    // このパスに対して設定してあるので、変えるならそちらを同時に動かす必要がある。
+    @Test
+    fun `the policy link points at the canonical public url`() {
+        assertEquals("https://lifegame.tachicoma.com/privacy", PrivacyPolicy.URL)
+    }
+
     @Test
     fun `weight summary shows latest measurement and count`() {
         val summary = HealthSummaryFormatter.weight(

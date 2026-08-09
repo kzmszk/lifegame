@@ -1,7 +1,9 @@
 package com.tachicoma.lifegame.companion
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -28,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
@@ -55,6 +59,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onRefresh = ::refresh,
                         onOpenSettings = ::openHealthConnectSettings,
+                        onOpenPrivacyPolicy = { openPrivacyPolicy() },
                     )
                 }
             }
@@ -113,11 +118,16 @@ private fun HealthConnectScreen(
     onRequestPermissions: () -> Unit,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenPrivacyPolicy: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
+            // targetSdk 35 では Android 15 以降が edge-to-edge を強制する。inset を
+            // スクロールの内側で確保しないと、末尾のボタンがナビゲーションバーの
+            // 下に入って押せなくなる。
+            .safeDrawingPadding()
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -169,6 +179,9 @@ private fun HealthConnectScreen(
             text = "この試作版は読み取り専用です。体重測定・運動実績・睡眠実績を端末内に表示するだけで、Health Connectへの書き込み、lifegameサーバーへの送信、バックグラウンド同期は行いません。",
             style = MaterialTheme.typography.bodyMedium,
         )
+        OutlinedButton(onClick = onOpenPrivacyPolicy) {
+            Text("プライバシーポリシーの全文を開く")
+        }
     }
 }
 
@@ -248,6 +261,28 @@ private fun SummaryCard(summary: HealthDataSummary) {
     }
 }
 
+/**
+ * ADR 0001: 全文は ACTION_VIEW でブラウザに渡す。Intent の起動に INTERNET 権限は要らないので、
+ * アプリはネットワーク権限を持たないまま公開ポリシーへ導線を張れる。
+ */
+private fun ComponentActivity.openPrivacyPolicy() {
+    try {
+        startActivity(Intent(Intent.ACTION_VIEW, PrivacyPolicy.URL.toUri()))
+    } catch (_: ActivityNotFoundException) {
+        // ブラウザがない、または仕事用プロファイルで web intent が転送されない場合。
+        // 黙って何も起きないと、全文へ辿り着く手段がなくなる。
+        showPolicyUnavailable()
+    } catch (_: SecurityException) {
+        showPolicyUnavailable()
+    }
+}
+
+// ここで Throwable ごと握ると、こちらの実装ミスまで「ブラウザを開けません」と
+// 表示して隠してしまう。捕まえるのは起動そのものが拒まれた2つだけにする。
+private fun ComponentActivity.showPolicyUnavailable() {
+    Toast.makeText(this, "ブラウザを開けませんでした。${PrivacyPolicy.URL}", Toast.LENGTH_LONG).show()
+}
+
 @Composable
 private fun LifegameCompanionTheme(content: @Composable () -> Unit) {
     MaterialTheme(content = content)
@@ -262,17 +297,22 @@ class PermissionsRationaleActivity : ComponentActivity() {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .safeDrawingPadding()
                             .padding(24.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         Text("lifegame 健康確認のプライバシー説明", style = MaterialTheme.typography.headlineSmall)
+                        // 権限を判断するその場で読めることに意味があるので要約を残す。
+                        // ただし細部は書かず、全文が正であることを画面上で明示する。
+                        Text("要点は次の3つです。")
+                        PrivacyPolicy.summary.forEach { point -> Text("・$point") }
                         Text(
-                            "このアプリは、利用者が許可した体重測定・運動実績・睡眠実績の読み取り権限だけを使い、直近30日の代表項目と件数を端末画面に表示します。",
+                            "全文はWebで公開しているものが正式な内容です。",
+                            style = MaterialTheme.typography.bodyMedium,
                         )
-                        Text(
-                            "データはHealth Connectから読み取るだけです。Health Connectへの書き込み、サーバーへの送信、広告・分析への利用、バックグラウンド同期は行いません。",
-                        )
-                        Button(onClick = ::finish) { Text("閉じる") }
+                        Button(onClick = { openPrivacyPolicy() }) { Text("プライバシーポリシーの全文を開く") }
+                        OutlinedButton(onClick = ::finish) { Text("閉じる") }
                     }
                 }
             }
