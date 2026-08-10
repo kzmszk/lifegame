@@ -50,6 +50,14 @@ export function releasePlan(mode) {
         label: 'Smoke-test the currently deployed production service',
         command: 'npm',
         args: ['run', 'smoke'],
+        // This step checks the service that is running now, not the one about to
+        // be released. A release that adds a path also adds its smoke check, and
+        // that check cannot pass until the deploy that introduces the path.
+        onFailure:
+          'この smoke は「今デプロイされている本番」に対して走る。今回のリリースで\n' +
+          '新しいパスを追加した場合、そのパスのチェックがここで落ちるのは正常で、\n' +
+          'npm run release（deploy のあとに smoke)で解消する。既存のパスが落ちて\n' +
+          'いる場合だけが本当の異常。',
       },
     ];
   }
@@ -173,7 +181,16 @@ function main() {
   const state = repositoryState();
   validateRepository(state);
   console.log(`Releasing ${state.head} from a clean, synchronized main.`);
-  for (const step of plan) run(step.command, step.args, step.label);
+  for (const step of plan) {
+    try {
+      run(step.command, step.args, step.label);
+    } catch (error) {
+      // The note explains a failure that is expected in this mode, so it belongs
+      // next to the failure rather than in a document nobody opens at that moment.
+      if (step.onFailure) console.error(`\n${step.onFailure}`);
+      throw error;
+    }
+  }
   console.log(
     mode === 'production'
       ? '\nProduction migration, deployment, and smoke checks completed.'
