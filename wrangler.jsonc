@@ -28,6 +28,7 @@
       "/token",
       "/authorize",
       "/csp-report",
+      "/sync",
     ],
     "not_found_handling": "single-page-application",
   },

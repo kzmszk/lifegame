@@ -6,7 +6,9 @@ import {
   HealthEntryValidationError,
   listHealthEntries,
   updateHealthEntry,
+  upsertSyncedHealthEntries,
 } from './health-entries';
+import type { SyncedHealthRecord } from '../lib/health-sync';
 
 describe('health entries on real D1', () => {
   it('creates and lists a weight measurement', async () => {
@@ -309,5 +311,91 @@ describe('health entries on real D1', () => {
          VALUES ('weight', '2026-08-07', 68.4, 'hc-record-1')`,
       ).run(),
     ).rejects.toThrow(/CHECK constraint failed/);
+  });
+});
+
+describe('upsertSyncedHealthEntries', () => {
+  const record = (overrides: Partial<SyncedHealthRecord> = {}) =>
+    ({
+      kind: 'weight',
+      external_id: 'hc-record-1',
+      occurred_on: '2026-08-10',
+      occurred_at: '2026-08-10T07:12:00+09:00',
+      weight_kg: 68.4,
+      activity: null,
+      duration_minutes: null,
+      ...overrides,
+    }) as SyncedHealthRecord;
+
+  async function storedRow(externalId: string) {
+    return env.DB.prepare(
+      `SELECT id, kind, occurred_on, occurred_at, weight_kg, note, source
+       FROM health_entries WHERE external_id = ?`,
+    )
+      .bind(externalId)
+      .first();
+  }
+
+  it('writes a record with its sync source and instant', async () => {
+    expect(await upsertSyncedHealthEntries(env.DB, [record()])).toBe(1);
+
+    expect(await storedRow('hc-record-1')).toMatchObject({
+      kind: 'weight',
+      occurred_on: '2026-08-10',
+      occurred_at: '2026-08-10T07:12:00+09:00',
+      weight_kg: 68.4,
+      source: 'health_connect',
+    });
+  });
+
+  it('updates in place rather than inserting a second row', async () => {
+    await upsertSyncedHealthEntries(env.DB, [record()]);
+    const first = await storedRow('hc-record-1');
+
+    await upsertSyncedHealthEntries(env.DB, [
+      record({ weight_kg: 67.1, occurred_on: '2026-08-11' }),
+    ]);
+
+    const page = await listHealthEntries(env.DB);
+    expect(page.entries).toHaveLength(1);
+    // The row keeps its id, so anything already pointing at it still resolves.
+    expect(await storedRow('hc-record-1')).toMatchObject({
+      id: (first as { id: number }).id,
+      weight_kg: 67.1,
+      occurred_on: '2026-08-11',
+    });
+  });
+
+  // A note only ever comes from lifegame; a sync carries none, so re-syncing must
+  // not blank one out.
+  it('preserves a note added in lifegame', async () => {
+    await upsertSyncedHealthEntries(env.DB, [record()]);
+    const stored = (await storedRow('hc-record-1')) as { id: number };
+    await updateHealthEntry(env.DB, stored.id, {
+      kind: 'weight',
+      note: '朝の測定',
+    });
+
+    await upsertSyncedHealthEntries(env.DB, [record({ weight_kg: 67.1 })]);
+
+    expect(await storedRow('hc-record-1')).toMatchObject({
+      note: '朝の測定',
+      weight_kg: 67.1,
+    });
+  });
+
+  it('writes nothing when one record in the batch is rejected by the table', async () => {
+    await expect(
+      upsertSyncedHealthEntries(env.DB, [
+        record(),
+        record({ external_id: 'hc-record-2', weight_kg: -1 }),
+      ]),
+    ).rejects.toThrow(HealthEntryValidationError);
+
+    expect((await listHealthEntries(env.DB)).entries).toEqual([]);
+  });
+
+  it('does nothing for an empty payload', async () => {
+    expect(await upsertSyncedHealthEntries(env.DB, [])).toBe(0);
   });
 });

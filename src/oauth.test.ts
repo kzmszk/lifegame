@@ -82,6 +82,7 @@ describe('OAuth authorization policy', () => {
       'tasks:read',
       'tasks:write',
       'calendar:read',
+      'health:write',
     ]);
     expect(grantedScopesForRequest(['tasks:read'])).toEqual(['tasks:read']);
     // A grant issued before calendar:read existed carries only what it was given.
@@ -91,10 +92,18 @@ describe('OAuth authorization policy', () => {
     ]);
   });
 
-  it('does not advertise or accept health or saved-link scopes', () => {
-    expect([...SUPPORTED_SCOPES]).not.toEqual(
-      expect.arrayContaining(['health:read', 'health:write']),
-    );
+  // health:write exists for the companion's POST /sync and nothing else. Reading
+  // health entries still has no scope, so a token cannot be turned into a way to
+  // read the data back out.
+  it('advertises health:write but not a health read scope', () => {
+    expect([...SUPPORTED_SCOPES]).toContain('health:write');
+    expect([...SUPPORTED_SCOPES]).not.toContain('health:read');
+    expect(
+      validateAuthorizationRequest(
+        authorizationRequest({ scope: ['health:write'] }),
+        client(),
+      ),
+    ).toBeNull();
     expect(
       validateAuthorizationRequest(
         authorizationRequest({ scope: ['health:read'] }),
@@ -102,6 +111,9 @@ describe('OAuth authorization policy', () => {
       )?.error,
     ).toBe('invalid_scope');
     expect(grantedScopesForRequest([])).not.toContain('health:read');
+  });
+
+  it('does not advertise or accept saved-link scopes', () => {
     expect([...SUPPORTED_SCOPES]).not.toEqual(
       expect.arrayContaining(['links:read', 'links:write']),
     );

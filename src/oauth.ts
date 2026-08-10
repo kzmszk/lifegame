@@ -4,15 +4,19 @@ import type {
 } from '@cloudflare/workers-oauth-provider';
 import type { Env } from './env';
 import { getAccessUser, isAccessAuthError } from './lib/access';
+import { readBoundedBody } from './lib/bounded-body';
 import { app } from './app';
 
 // calendar:read is separate from tasks:read because Google Calendar is a
 // different data source with a different owner. Grants issued before it existed
 // carry only the task scopes, so they keep seeing tasks only until reconnected.
+// health:write is the companion app's scope and reaches /sync only; no MCP tool
+// consults it, so an MCP client granted it can still do nothing extra.
 export const SUPPORTED_SCOPES = [
   'tasks:read',
   'tasks:write',
   'calendar:read',
+  'health:write',
 ] as const;
 type SupportedScope = (typeof SUPPORTED_SCOPES)[number];
 
@@ -22,6 +26,7 @@ const SCOPE_DESCRIPTIONS: Record<SupportedScope, string> = {
   'tasks:read': 'lifegameのタスクを読む',
   'tasks:write': 'lifegameのタスクを追加・変更・削除する',
   'calendar:read': 'Googleカレンダー（private）の予定と祝日を読む',
+  'health:write': '端末で読んだ体重測定・運動実績をlifegameへ同期する',
 };
 
 const CONSENT_CSRF_COOKIE_PREFIX = '__Host-lifegame-consent-';
@@ -258,7 +263,9 @@ export function validateAuthorizationRequest(
 export function grantedScopesForRequest(
   requestedScopes: string[],
 ): SupportedScope[] {
-  // An omitted scope is an explicit request for the full task capability set.
+  // An omitted scope is an explicit request for every scope this server supports.
+  // The consent page lists them individually, so what gets approved is still shown
+  // one by one rather than hidden behind the omission.
   return requestedScopes.length > 0
     ? (requestedScopes as SupportedScope[])
     : [...SUPPORTED_SCOPES];
@@ -295,40 +302,6 @@ function consentCsp(redirectUri: string): string {
     `report-uri ${CSP_REPORT_PATH}`,
     `report-to ${CSP_REPORT_ENDPOINT_NAME}`,
   ].join('; ');
-}
-
-// Returns null once the byte budget is exceeded. The stream is read in chunks and
-// cancelled rather than buffered, so an oversized POST to this unauthenticated
-// path cannot make the isolate materialize it first.
-async function readBoundedBody(
-  request: Request,
-  maxBytes: number,
-): Promise<string | null> {
-  const declared = Number(request.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > maxBytes) return null;
-  if (!request.body) return '';
-
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(merged);
 }
 
 async function handleCspReport(request: Request): Promise<Response> {
