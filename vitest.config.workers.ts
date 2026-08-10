@@ -25,6 +25,9 @@ export default async function () {
         'src/db/saved-links.test.ts',
         'src/db/tasks.test.ts',
         'src/routes/api.test.ts',
+        // Imports the OAuth provider package as a value, and that package imports
+        // cloudflare:workers, which the node pool's ESM loader cannot resolve.
+        'src/lib/token-exchange.test.ts',
       ],
       exclude: [...configDefaults.exclude, 'e2e/**'],
       setupFiles: ['./test/apply-migrations.ts'],

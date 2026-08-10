@@ -16,13 +16,33 @@ export type ClientRegistrationStore = Pick<OAuthHelpers, 'updateClient'>;
 // An empty update is deliberate. The provider carries the stored client forward
 // field by field and only re-hashes a secret when the update carries one, so this
 // re-put preserves the existing secret and auth method exactly.
+//
+// One consequence is worth stating. For a confidential client, /register answered
+// with `client_secret_expires_at = registrationDate + TTL`, and nothing here
+// revises that: the secret keeps working past the moment the server once
+// advertised. The direction is the safe one — a client that honours the metadata
+// re-registers on schedule, which is exactly today's behaviour — but a leaked
+// secret no longer ages out on its own while the connection stays in use.
+// Disconnecting from /connections is what ends it, and that path is unaffected.
 export async function slideClientRegistration(
   provider: ClientRegistrationStore,
   clientId: string,
 ): Promise<void> {
   if (!clientId) return;
   try {
-    await provider.updateClient(clientId, {});
+    // The provider looks the client up again, so a registration that expires
+    // between the token endpoint's own lookup and this one is already gone and
+    // comes back null. Nothing can be extended at that point; the connection was
+    // within milliseconds of ending either way. Failing the exchange over it would
+    // disconnect the client this call exists to keep connected, so it is logged
+    // and the exchange proceeds.
+    const updated = await provider.updateClient(clientId, {});
+    if (!updated) {
+      console.warn(
+        'クライアント登録が見つからないため有効期限を延長できませんでした',
+        clientId,
+      );
+    }
   } catch (cause) {
     // The token being exchanged is valid whether or not its registration was
     // extended, and failing the exchange would disconnect the client this call

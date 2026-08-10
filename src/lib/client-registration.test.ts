@@ -50,6 +50,21 @@ describe('slideClientRegistration', () => {
     warn.mockRestore();
   });
 
+  // A registration that expired between the token endpoint's lookup and this one
+  // comes back null. There is nothing left to extend, and refusing the exchange
+  // would disconnect the client this call exists to keep connected.
+  it('lets the exchange through when the registration is already gone', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const provider = storeSpy(async () => null);
+
+    await expect(
+      slideClientRegistration(provider, 'client-123'),
+    ).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
+
   it('does not write for a missing client id', async () => {
     const provider = storeSpy();
 

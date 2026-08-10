@@ -14,6 +14,7 @@ export default defineProject({
       'src/db/migration-0004.test.ts',
       'src/db/tasks.test.ts',
       'src/routes/api.test.ts',
+      'src/lib/token-exchange.test.ts',
     ],
   },
 });
