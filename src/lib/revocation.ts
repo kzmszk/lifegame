@@ -36,6 +36,19 @@ export async function revokedGrantIds(
   return new Set((rows.results ?? []).map((row) => row.grant_id));
 }
 
+// Every Bearer-authenticated path asks the same question of a token's props, so
+// the rule for what counts as still-connected lives here rather than once per
+// caller. Tokens minted before grantId was recorded carry no id to check and
+// expire within the hour, so they are treated as active.
+export async function isGrantActiveForProps(
+  db: D1Database,
+  props: { email?: unknown; grantId?: unknown } | undefined,
+): Promise<boolean> {
+  const { email, grantId } = props ?? {};
+  if (typeof grantId !== 'string' || typeof email !== 'string') return true;
+  return !(await isGrantRevoked(db, email, grantId));
+}
+
 export async function isGrantRevoked(
   db: D1Database,
   userId: string,

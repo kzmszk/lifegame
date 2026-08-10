@@ -59,6 +59,15 @@ const checks = [
   },
   { path: '/csp-report', expect: 405, why: 'GET は受け付けない' },
   {
+    // Bearer が無いので OAuth provider が 401 を返す。302 なら Access に吸われて
+    // companion からは一切届かない。405 なら Bypass はできているが provider の
+    // apiHandlers に載っておらず、SPA の fallback が答えている。
+    path: '/sync',
+    method: 'POST',
+    expect: 401,
+    why: 'Bypass 済み。companion の同期は OAuth の Bearer が持つ',
+  },
+  {
     // Play と Health Connect の権限画面から未認証で開ける必要がある唯一のページ。
     // 実体が privacy/index.html なので、Assets の html_handling が /privacy を
     // /privacy/ へ 307 で正規化する。Bypass が /privacy だけで /privacy/* を

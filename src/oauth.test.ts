@@ -75,14 +75,15 @@ describe('OAuth authorization policy', () => {
         client(),
       )?.error,
     ).toBe('invalid_scope');
-    // Omitting scope stays "everything supported", and the consent page
-    // enumerates what that covers, so calendar access is still shown before
-    // approval rather than folded in silently.
+    // Omitting scope means the default set, which is deliberately not everything
+    // supported: the clients that omit scope were written before health:write
+    // existed, and their next reauthorization must not silently gain it.
     expect(grantedScopesForRequest([])).toEqual([
       'tasks:read',
       'tasks:write',
       'calendar:read',
     ]);
+    expect(grantedScopesForRequest([])).not.toContain('health:write');
     expect(grantedScopesForRequest(['tasks:read'])).toEqual(['tasks:read']);
     // A grant issued before calendar:read existed carries only what it was given.
     expect(grantedScopesForRequest(['tasks:read', 'tasks:write'])).toEqual([
@@ -91,10 +92,21 @@ describe('OAuth authorization policy', () => {
     ]);
   });
 
-  it('does not advertise or accept health or saved-link scopes', () => {
-    expect([...SUPPORTED_SCOPES]).not.toEqual(
-      expect.arrayContaining(['health:read', 'health:write']),
-    );
+  // health:write exists for the companion's POST /sync and nothing else. Reading
+  // health entries still has no scope, so a token cannot be turned into a way to
+  // read the data back out. A client that wants to write has to name the scope,
+  // which is what keeps it out of the omitted-scope default above.
+  it('advertises health:write but only grants it when asked for', () => {
+    expect([...SUPPORTED_SCOPES]).toContain('health:write');
+    expect([...SUPPORTED_SCOPES]).not.toContain('health:read');
+    expect(
+      validateAuthorizationRequest(
+        authorizationRequest({ scope: ['health:write'] }),
+        client(),
+      ),
+    ).toBeNull();
+    expect(grantedScopesForRequest(['health:write'])).toEqual(['health:write']);
+    expect(grantedScopesForRequest([])).not.toContain('health:write');
     expect(
       validateAuthorizationRequest(
         authorizationRequest({ scope: ['health:read'] }),
@@ -102,6 +114,9 @@ describe('OAuth authorization policy', () => {
       )?.error,
     ).toBe('invalid_scope');
     expect(grantedScopesForRequest([])).not.toContain('health:read');
+  });
+
+  it('does not advertise or accept saved-link scopes', () => {
     expect([...SUPPORTED_SCOPES]).not.toEqual(
       expect.arrayContaining(['links:read', 'links:write']),
     );

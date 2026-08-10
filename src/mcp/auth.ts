@@ -1,6 +1,6 @@
 import { McpToolError } from './tools';
 import type { Env } from '../env';
-import { isGrantRevoked } from '../lib/revocation';
+import { isGrantActiveForProps } from '../lib/revocation';
 
 export type McpScope = 'tasks:read' | 'tasks:write' | 'calendar:read';
 export type McpAuthProps = { email: string; scopes: string[] } & Record<
@@ -27,15 +27,13 @@ export function assertMcpScope(
 // Revocation cannot be serialized with the provider's own token write, so a token
 // minted by a refresh that raced a disconnect can outlive the grant. Checking the
 // marker here is what makes disconnecting effective: whatever survives that race
-// still cannot reach the tasks. Tokens issued before grantId was recorded carry no
-// id to check and expire within the hour.
+// still cannot reach the tasks. The rule itself is shared with POST /sync so the
+// two cannot drift; only the way a refusal is reported differs.
 export async function assertGrantActive(
   db: Env['DB'],
   props: McpAuthProps | undefined,
 ): Promise<void> {
-  const grantId = props?.grantId;
-  if (typeof grantId !== 'string' || !props?.email) return;
-  if (await isGrantRevoked(db, props.email, grantId)) {
+  if (!(await isGrantActiveForProps(db, props))) {
     throw new McpToolError('この接続は切断されています。再接続してください');
   }
 }

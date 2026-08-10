@@ -1,5 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { validDate } from '../lib/task-validation';
+import type { SyncedHealthRecord } from '../lib/health-sync';
 import type {
   HealthEntry,
   HealthEntryInput,
@@ -418,6 +419,62 @@ export async function updateHealthEntry(
   }
   if (!result.success || result.meta.changes === 0) return null;
   return getHealthEntry(db, id);
+}
+
+export const SYNC_SOURCE = 'health_connect';
+
+/**
+ * Writes one companion pull. Health Connect replays the same record on every
+ * incremental pull, so the write is an upsert keyed by the unique index on
+ * (source, external_id) and re-sending a payload changes nothing.
+ *
+ * Two columns are deliberately left out of the update. `note` is only ever set in
+ * lifegame, and `id` stays put so anything referring to the row keeps referring to
+ * it. Manual rows carry no external_id and SQLite treats NULLs in a UNIQUE index
+ * as distinct, so no manual entry can ever be the conflict target here.
+ *
+ * Returns the number of records written; D1 runs the batch as one transaction, so
+ * a rejected record leaves none of the payload behind.
+ */
+export async function upsertSyncedHealthEntries(
+  db: D1Database,
+  records: SyncedHealthRecord[],
+): Promise<number> {
+  if (records.length === 0) return 0;
+  const statement = db.prepare(
+    `INSERT INTO health_entries
+       (kind, occurred_on, weight_kg, activity, duration_minutes, note,
+        source, external_id, occurred_at)
+     VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)
+     ON CONFLICT (source, external_id) DO UPDATE SET
+       kind = excluded.kind,
+       occurred_on = excluded.occurred_on,
+       weight_kg = excluded.weight_kg,
+       activity = excluded.activity,
+       duration_minutes = excluded.duration_minutes,
+       occurred_at = excluded.occurred_at,
+       updated_at = datetime('now')`,
+  );
+  try {
+    await db.batch(
+      records.map((record) =>
+        statement.bind(
+          record.kind,
+          record.occurred_on,
+          record.weight_kg,
+          record.activity,
+          record.duration_minutes,
+          SYNC_SOURCE,
+          record.external_id,
+          record.occurred_at,
+        ),
+      ),
+    );
+  } catch (thrown) {
+    if (isCheckConstraintError(thrown)) throw new HealthEntryConstraintError();
+    throw thrown;
+  }
+  return records.length;
 }
 
 export async function deleteHealthEntry(

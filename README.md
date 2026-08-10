@@ -131,11 +131,16 @@ Cloudflare Zero TrustのAccessアプリでは、MCPのOAuthプロトコルをAcc
 - `/register`
 - `/token`
 - `/csp-report`（承認画面のCSP違反レポートの送信先。ブラウザからの無認証POSTなので除外が必要）
+- `/sync`（Androidのcompanionが健康記録を送るPOST。`/mcp` と同じくBearer tokenが必須）
 
 `/authorize` は除外しない。認可画面はAccess配下に残り、Worker側でも
 `Cf-Access-Jwt-Assertion` をJWKSで検証し、JWTの `email` claimと `ALLOWED_EMAIL` を比較する。`/mcp` のタスクデータは
 Cloudflare OAuthのBearer tokenが必須で、DCR・メタデータ・tokenエンドポイントだけが公開される。
 既存の `/api/*` とSPAの保護設定は変更しない。
+
+`/sync` を `/api/health/sync` にしないのは、「`/api/*` はAccessが止める」というルールに例外を
+作らないため。companionはブラウザのAccessセッションを持てないので、`/api` 配下に置くと
+Accessのパスルールに穴を開けることになる。`/mcp` と同じ形にすれば、開ける穴の性質は既存と変わらない。
 
 公開するホスト名は、カスタムドメインを含めてすべてCloudflare Accessアプリの対象にする。
 `wrangler.jsonc` では意図しない `workers.dev` とPreview URLも無効化している。AccessのBYPASSは
@@ -143,6 +148,50 @@ Cloudflare OAuthのBearer tokenが必須で、DCR・メタデータ・tokenエ�
 Cloudflare AccessのJWKSエンドポイント（`<ACCESS_TEAM_DOMAIN>/cdn-cgi/access/certs`）で検証し、issuer、audience、
 有効期限も確認する。認証が有効なとき、ユーザーのメールアドレスはJWTの `email` claimだけを信頼し、
 `Cf-Access-Authenticated-User-Email` ヘッダーは認証に使用しない。
+
+### companion からの健康記録の同期 (POST /sync)
+
+Android の companion アプリが Health Connect から読んだ体重測定・運動実績を送る唯一の口。
+認証は `/mcp` と同じ Cloudflare OAuth の Bearer token で、`health:write` スコープが要る。
+このスコープは `scope` を省略したときの既定には**入らない**ので、companion は明示的に要求する。
+（既存の MCP クライアントが再認可しただけで健康記録の書き込み権限を持つのを避けるため）
+companion は public client (`token_endpoint_auth_method: none`) + PKCE S256 で DCR し、
+同意画面は Chrome Custom Tabs で開く (WebView は Access のセッションを共有できないので不可)。
+
+リクエストは記録の配列そのもの。1回あたり最大500件・512KiBまで。
+
+```jsonc
+[
+  {
+    "kind": "weight",
+    "external_id": "<Health Connect の record id>",
+    "occurred_at": "2026-08-10T07:12:00+09:00", // オフセット必須
+    "weight_kg": 68.4,
+  },
+  {
+    "kind": "exercise",
+    "external_id": "...",
+    "occurred_at": "2026-08-10T19:00:00+09:00",
+    "activity": "ランニング",
+    "duration_minutes": 32, // 省略可
+  },
+]
+```
+
+レスポンスは `{"accepted": 2}` だけ。どこまで同期したかを表す changes token は端末側が持つ
+（サーバーが持つと同期の正が二箇所になる）。
+
+- 冪等性は `(source, external_id)` の UNIQUE index による upsert で担保する。同じ payload を
+  何度送っても行は増えない。差分同期が同じ record を再送する前提の設計
+- 手入力の記録は `external_id` を持たず、SQLite は UNIQUE index の NULL を別物として扱うので、
+  同期が手入力の行に当たることはない。lifegame で付けた `note` も upsert では上書きしない
+- 睡眠実績は `health_entries` に入れる形がないので、黙って捨てずに 400 で拒否する
+  （受理したことにすると端末が changes token を進めて二度と再送しない）。長すぎる `activity` も
+  同じ理由で切り詰めず拒否する
+- `occurred_at` のオフセット `-00:00` は RFC 3339 で「不明」を意味するため拒否する。ローカル日付を
+  導出できないので。UTC なら `Z` か `+00:00` を送る
+- 削除は同期しない。Health Connect の削除 change は record type を含まないため。lifegame 側で消す
+- 書き込み専用。健康記録を読み返すスコープは無い
 
 ### 承認画面のCSPを変更するときの注意
 
