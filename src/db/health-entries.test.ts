@@ -248,4 +248,66 @@ describe('health entries on real D1', () => {
       ).run(),
     ).rejects.toThrow(/CHECK constraint failed/);
   });
+
+  it('records manual entries as their own source', async () => {
+    const created = await createHealthEntry(env.DB, {
+      kind: 'weight',
+      occurred_on: '2026-08-07',
+      weight_kg: 68.4,
+    });
+
+    const row = await env.DB.prepare(
+      'SELECT source, external_id, occurred_at FROM health_entries WHERE id = ?',
+    )
+      .bind(created.id)
+      .first<{
+        source: string;
+        external_id: string | null;
+        occurred_at: string | null;
+      }>();
+    expect(row).toEqual({
+      source: 'manual',
+      external_id: null,
+      occurred_at: null,
+    });
+  });
+
+  it('rejects a second row with the same external id', async () => {
+    const insertSynced = (occurredOn: string) =>
+      env.DB.prepare(
+        `INSERT INTO health_entries
+           (kind, occurred_on, weight_kg, source, external_id, occurred_at)
+         VALUES ('weight', ?, 68.4, 'health_connect', 'hc-record-1', ?)`,
+      )
+        .bind(occurredOn, `${occurredOn}T07:12:00+09:00`)
+        .run();
+
+    await insertSynced('2026-08-07');
+    await expect(insertSynced('2026-08-08')).rejects.toThrow(
+      /UNIQUE constraint failed/,
+    );
+  });
+
+  it('keeps manual entries out of the dedupe key', async () => {
+    await createHealthEntry(env.DB, {
+      kind: 'weight',
+      occurred_on: '2026-08-07',
+      weight_kg: 68.4,
+    });
+    await createHealthEntry(env.DB, {
+      kind: 'weight',
+      occurred_on: '2026-08-07',
+      weight_kg: 68.9,
+    });
+
+    const page = await listHealthEntries(env.DB);
+    expect(page.entries).toHaveLength(2);
+
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO health_entries (kind, occurred_on, weight_kg, external_id)
+         VALUES ('weight', '2026-08-07', 68.4, 'hc-record-1')`,
+      ).run(),
+    ).rejects.toThrow(/CHECK constraint failed/);
+  });
 });

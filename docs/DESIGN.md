@@ -578,6 +578,11 @@ CREATE TABLE health_entries (
   note             TEXT NOT NULL DEFAULT '',
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  source           TEXT NOT NULL DEFAULT 'manual'  -- 'manual' | 'health_connect'
+                     CHECK (source IN ('manual', 'health_connect')),
+  external_id      TEXT                            -- Health Connect の record id
+                     CHECK (external_id IS NULL OR source <> 'manual'),
+  occurred_at      TEXT,                           -- '2026-08-10T07:12:00+09:00'
   CHECK (
     (kind = 'weight' AND weight_kg IS NOT NULL AND weight_kg > 0
       AND activity IS NULL AND duration_minutes IS NULL)
@@ -590,7 +595,15 @@ CREATE TABLE health_entries (
 );
 CREATE INDEX idx_health_entries_occurred
   ON health_entries(occurred_on DESC, id DESC);
+CREATE UNIQUE INDEX idx_health_entries_external
+  ON health_entries(source, external_id);
 ```
+
+同期は同じ測定を何度も送ってくるので、重複排除の鍵を `(source, external_id)` に置く。
+SQLite の UNIQUE は NULL を重複扱いしないため、`external_id` を持たない手入力は何件でも入る。
+`occurred_on` は表示と一覧の鍵のまま残し、日付しか持たない `occurred_on` では落ちる測定時刻を
+`occurred_at` に追加情報として持つ。睡眠は `kind` の CHECK にまだ無く、同期対象に加えるなら
+CHECK の拡張が別途要る。
 
 日付が実在するか、数値が有限か、文字列長など利用者向けエラーに必要な検証はアプリ側で行い、
 DB 制約は競合や実装漏れを含む不正状態の保存を最後に拒否する。単位は体重を kg、時間を分に固定し、
