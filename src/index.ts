@@ -6,6 +6,7 @@ import { defaultHandler, SUPPORTED_SCOPES } from './oauth';
 import { LifegameMcp } from './mcp/server';
 import { validateClientRegistrationMetadata } from './lib/oauth-policy';
 import { isGrantRevoked } from './lib/revocation';
+import { slideClientRegistration } from './lib/client-registration';
 
 const CLIENT_REGISTRATION_TTL = 7 * 24 * 60 * 60;
 
@@ -46,6 +47,7 @@ export default new OAuthProvider<Env>({
     validateClientRegistrationMetadata(clientMetadata),
   tokenExchangeCallback: async ({
     grantType,
+    clientId,
     userId,
     grantId,
     props,
@@ -62,6 +64,11 @@ export default new OAuthProvider<Env>({
         description: 'この接続は切断されています',
       });
     }
+
+    // After the revocation check, so a disconnected grant does not get its client
+    // registration extended on the way out.
+    await slideClientRegistration((workerEnv as Env).OAUTH_PROVIDER, clientId);
+
     return {
       // Keep grant props broad for refreshes, while making each access token's
       // effective/downscoped permissions explicit to MCP tool handlers.
