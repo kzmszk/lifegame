@@ -5,20 +5,14 @@ import type {
 import type { Env } from './env';
 import { getAccessUser, isAccessAuthError } from './lib/access';
 import { readBoundedBody } from './lib/bounded-body';
+import {
+  DEFAULT_SCOPES,
+  SUPPORTED_SCOPES,
+  type SupportedScope,
+} from './lib/scopes';
 import { app } from './app';
 
-// calendar:read is separate from tasks:read because Google Calendar is a
-// different data source with a different owner. Grants issued before it existed
-// carry only the task scopes, so they keep seeing tasks only until reconnected.
-// health:write is the companion app's scope and reaches /sync only; no MCP tool
-// consults it, so an MCP client granted it can still do nothing extra.
-export const SUPPORTED_SCOPES = [
-  'tasks:read',
-  'tasks:write',
-  'calendar:read',
-  'health:write',
-] as const;
-type SupportedScope = (typeof SUPPORTED_SCOPES)[number];
+export { SUPPORTED_SCOPES } from './lib/scopes';
 
 // Typed as a total record so a new scope cannot reach the consent page without
 // a description: approving a permission nobody explained is the failure mode.
@@ -263,12 +257,12 @@ export function validateAuthorizationRequest(
 export function grantedScopesForRequest(
   requestedScopes: string[],
 ): SupportedScope[] {
-  // An omitted scope is an explicit request for every scope this server supports.
-  // The consent page lists them individually, so what gets approved is still shown
-  // one by one rather than hidden behind the omission.
+  // An omitted scope means the default set, not everything supported. Adding a
+  // scope to SUPPORTED_SCOPES must not widen what an already-written client
+  // receives the next time it reauthorizes without naming its scopes.
   return requestedScopes.length > 0
     ? (requestedScopes as SupportedScope[])
-    : [...SUPPORTED_SCOPES];
+    : [...DEFAULT_SCOPES];
 }
 
 // form-action also constrains the redirect that follows the submission, so the

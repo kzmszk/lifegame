@@ -9,9 +9,12 @@ import {
   MAX_SYNC_BODY_BYTES,
   normalizeSyncPayload,
 } from '../lib/health-sync';
-import { isGrantRevoked } from '../lib/revocation';
+import { isGrantActiveForProps } from '../lib/revocation';
+import { HEALTH_SYNC_SCOPE } from '../lib/scopes';
 
-export const HEALTH_SYNC_SCOPE = 'health:write';
+export { HEALTH_SYNC_SCOPE } from '../lib/scopes';
+
+export const SYNC_PATH = '/sync';
 
 export type SyncEnv = Pick<Env, 'DB'>;
 
@@ -57,6 +60,13 @@ export async function handleHealthSync(
   env: SyncEnv,
   props: SyncAuthProps | undefined,
 ): Promise<Response> {
+  // The provider matches api handlers by prefix, so /syncanything arrives here
+  // too. The documented surface is one path; anything else is not a route this
+  // Worker offers, whatever the token says.
+  const { pathname } = new URL(request.url);
+  if (pathname !== SYNC_PATH && pathname !== `${SYNC_PATH}/`) {
+    return errorResponse('Not Found', 404);
+  }
   if (request.method !== 'POST') {
     return errorResponse('Method Not Allowed', 405, { Allow: 'POST' });
   }
@@ -71,11 +81,7 @@ export async function handleHealthSync(
   }
   // Same race as the MCP tools: a token minted by a refresh that overlapped a
   // disconnect can outlive its grant, and the marker is what still stops it.
-  if (
-    typeof props?.grantId === 'string' &&
-    typeof props.email === 'string' &&
-    (await isGrantRevoked(env.DB, props.email, props.grantId))
-  ) {
+  if (!(await isGrantActiveForProps(env.DB, props))) {
     return errorResponse(
       'この接続は切断されています。再接続してください',
       401,

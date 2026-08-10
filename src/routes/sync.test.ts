@@ -126,6 +126,35 @@ describe('POST /sync', () => {
     expect((await sync([weight()])).status).toBe(200);
   });
 
+  // The provider matches api handlers by prefix, so a valid token would otherwise
+  // reach this handler at any path starting with /sync and write through it.
+  it('refuses a path that only starts with /sync', async () => {
+    const response = await handleHealthSync(
+      new Request('https://lifegame.example.com/sync-anything', {
+        method: 'POST',
+        body: JSON.stringify([weight()]),
+      }),
+      env,
+      SYNCED_PROPS,
+    );
+
+    expect(response.status).toBe(404);
+    expect(await entries()).toEqual([]);
+  });
+
+  it('accepts the path with a trailing slash', async () => {
+    const response = await handleHealthSync(
+      new Request('https://lifegame.example.com/sync/', {
+        method: 'POST',
+        body: JSON.stringify([weight()]),
+      }),
+      env,
+      SYNCED_PROPS,
+    );
+
+    expect(await response.json()).toEqual({ accepted: 1 });
+  });
+
   it('rejects anything but POST', async () => {
     const response = await handleHealthSync(
       post(null, 'GET'),

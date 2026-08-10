@@ -153,6 +153,8 @@ Cloudflare AccessのJWKSエンドポイント（`<ACCESS_TEAM_DOMAIN>/cdn-cgi/ac
 
 Android の companion アプリが Health Connect から読んだ体重測定・運動実績を送る唯一の口。
 認証は `/mcp` と同じ Cloudflare OAuth の Bearer token で、`health:write` スコープが要る。
+このスコープは `scope` を省略したときの既定には**入らない**ので、companion は明示的に要求する。
+（既存の MCP クライアントが再認可しただけで健康記録の書き込み権限を持つのを避けるため）
 companion は public client (`token_endpoint_auth_method: none`) + PKCE S256 で DCR し、
 同意画面は Chrome Custom Tabs で開く (WebView は Access のセッションを共有できないので不可)。
 
@@ -184,7 +186,10 @@ companion は public client (`token_endpoint_auth_method: none`) + PKCE S256 で
 - 手入力の記録は `external_id` を持たず、SQLite は UNIQUE index の NULL を別物として扱うので、
   同期が手入力の行に当たることはない。lifegame で付けた `note` も upsert では上書きしない
 - 睡眠実績は `health_entries` に入れる形がないので、黙って捨てずに 400 で拒否する
-  （受理したことにすると端末が changes token を進めて二度と再送しない）
+  （受理したことにすると端末が changes token を進めて二度と再送しない）。長すぎる `activity` も
+  同じ理由で切り詰めず拒否する
+- `occurred_at` のオフセット `-00:00` は RFC 3339 で「不明」を意味するため拒否する。ローカル日付を
+  導出できないので。UTC なら `Z` か `+00:00` を送る
 - 削除は同期しない。Health Connect の削除 change は record type を含まないため。lifegame 側で消す
 - 書き込み専用。健康記録を読み返すスコープは無い
 

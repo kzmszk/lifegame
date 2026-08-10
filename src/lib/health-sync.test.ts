@@ -5,6 +5,8 @@ import {
   normalizeSyncPayload,
 } from './health-sync';
 
+const MAX_ACTIVITY_LENGTH = 200;
+
 function weight(overrides: Record<string, unknown> = {}) {
   return {
     kind: 'weight',
@@ -99,6 +101,28 @@ describe('normalizeSyncPayload', () => {
     );
   });
 
+  // RFC 3339 4.3: -00:00 means the offset is unknown, so it cannot yield a local
+  // date. A stated zero offset can, in either spelling.
+  it('rejects the unknown offset but accepts a stated zero offset', () => {
+    expect(
+      rejects([weight({ occurred_at: '2026-08-10T07:12:00-00:00' })]),
+    ).toContain('-00:00');
+
+    for (const zero of ['Z', '+00:00']) {
+      const [record] = normalizeSyncPayload([
+        weight({ occurred_at: `2026-08-10T07:12:00${zero}` }),
+      ]);
+      expect(record?.occurred_on).toBe('2026-08-10');
+    }
+  });
+
+  it('takes the local date from a negative offset too', () => {
+    const [record] = normalizeSyncPayload([
+      weight({ occurred_at: '2026-08-10T22:12:00-05:00' }),
+    ]);
+    expect(record?.occurred_on).toBe('2026-08-10');
+  });
+
   it('rejects an occurred_at that is not a real date or time', () => {
     expect(
       rejects([weight({ occurred_at: '2026-02-30T07:12:00+09:00' })]),
@@ -123,6 +147,27 @@ describe('normalizeSyncPayload', () => {
   it('rejects mixed shapes', () => {
     expect(rejects([weight({ activity: 'ランニング' })])).toContain('運動実績');
     expect(rejects([exercise({ weight_kg: 68 })])).toContain('体重測定');
+  });
+
+  // Truncating would answer 200 and let the companion advance its changes token,
+  // leaving the shortened name as the only copy.
+  it('rejects an over-long activity instead of truncating it', () => {
+    const long = 'ラ'.repeat(MAX_ACTIVITY_LENGTH + 1);
+    expect(rejects([exercise({ activity: long })])).toContain(
+      String(MAX_ACTIVITY_LENGTH),
+    );
+
+    const atLimit = 'ラ'.repeat(MAX_ACTIVITY_LENGTH);
+    const [record] = normalizeSyncPayload([exercise({ activity: atLimit })]);
+    expect(record?.activity).toBe(atLimit);
+  });
+
+  // SQLite's length() stops at a NUL, so this would otherwise pass validation and
+  // then fail the table's CHECK with a message naming no field.
+  it('rejects control characters in an activity', () => {
+    expect(rejects([exercise({ activity: '\u0000ランニング' })])).toContain(
+      '制御文字',
+    );
   });
 
   it('rejects an out-of-range weight and duration', () => {

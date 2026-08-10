@@ -17,6 +17,22 @@ const MAX_ACTIVITY_LENGTH = 200;
 const OCCURRED_AT_PATTERN =
   /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;
 
+// RFC 3339 section 4.3 gives `-00:00` the meaning "the offset is unknown", which
+// is the one thing this endpoint cannot accept: the local calendar day is derived
+// from the offset, and an unknown offset cannot produce one. `Z` and `+00:00` both
+// state a known zero offset and stay valid.
+const UNKNOWN_OFFSET = '-00:00';
+
+// Same code-point test as isSafeRedirectUri in src/oauth.ts, written as a scan
+// rather than a regex because a control-character class is exactly what the
+// no-control-regex lint refuses.
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return (code >= 0 && code <= 31) || (code >= 127 && code <= 159);
+  });
+}
+
 export class HealthSyncValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -83,11 +99,15 @@ function parseOccurredAt(
     invalid(
       `${label(index)}.occurred_at はオフセット付きの ISO 8601 日時で指定してください`,
     );
-  const [, date, hour, minute] = matched;
+  const [, date, hour, minute, offset] = matched;
   if (!validDate(date!))
     invalid(`${label(index)}.occurred_at の日付が不正です`);
   if (Number(hour) > 23 || Number(minute) > 59)
     invalid(`${label(index)}.occurred_at の時刻が不正です`);
+  if (offset === UNKNOWN_OFFSET)
+    invalid(
+      `${label(index)}.occurred_at のオフセット -00:00 は「不明」の意味なので受け付けません（UTC なら Z か +00:00）`,
+    );
   if (!Number.isFinite(Date.parse(value)))
     invalid(`${label(index)}.occurred_at を日時として解釈できません`);
   return { occurred_at: value, occurred_on: date! };
@@ -104,7 +124,20 @@ function parseWeight(value: unknown, index: number): number {
 function parseActivity(value: unknown, index: number): string {
   if (typeof value !== 'string' || value.trim() === '')
     invalid(`${label(index)}.activity は空にできません`);
-  return value.trim().slice(0, MAX_ACTIVITY_LENGTH);
+  const trimmed = value.trim();
+  // Truncating here would answer 200, the companion would advance its changes
+  // token, and the shortened name would be the only copy left. Refusing keeps the
+  // record on the device where the full value still exists.
+  if (trimmed.length > MAX_ACTIVITY_LENGTH)
+    invalid(
+      `${label(index)}.activity は ${MAX_ACTIVITY_LENGTH} 文字以内で指定してください`,
+    );
+  // SQLite's length() stops at a NUL, so a control character can turn an activity
+  // this layer considers non-empty into one the table's CHECK rejects. Naming it
+  // here is what makes the 400 say which field is wrong.
+  if (hasControlCharacter(trimmed))
+    invalid(`${label(index)}.activity に制御文字は含められません`);
+  return trimmed;
 }
 
 function parseDuration(value: unknown, index: number): number | null {
