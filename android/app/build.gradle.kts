@@ -51,6 +51,15 @@ android {
         // 解決するのに merged resources が要る。これが false だと画面のテストは
         // 「リソースが見つからない」で落ちる。
         unitTests.isIncludeAndroidResources = true
+
+        // gradle は既定だとテスト名を出さないので、CI のログからは「何件通ったか」も
+        // 「そもそも実行されたか」も読めない。画面のテストは黙って0件になっても
+        // 緑のままなので、走った証拠をログに残す。
+        unitTests.all { test ->
+            test.testLogging {
+                events("passed", "skipped", "failed")
+            }
+        }
     }
 }
 
