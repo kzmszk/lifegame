@@ -264,10 +264,14 @@ private fun SummaryCard(summary: HealthDataSummary) {
 /**
  * ADR 0001: 全文は ACTION_VIEW でブラウザに渡す。Intent の起動に INTERNET 権限は要らないので、
  * アプリはネットワーク権限を持たないまま公開ポリシーへ導線を張れる。
+ *
+ * 生成を startActivity から切り離してあるのは、何を投げているかをテストから直接読めるようにするため。
  */
+internal fun privacyPolicyIntent(): Intent = Intent(Intent.ACTION_VIEW, PrivacyPolicy.URL.toUri())
+
 private fun ComponentActivity.openPrivacyPolicy() {
     try {
-        startActivity(Intent(Intent.ACTION_VIEW, PrivacyPolicy.URL.toUri()))
+        startActivity(privacyPolicyIntent())
     } catch (_: ActivityNotFoundException) {
         // ブラウザがない、または仕事用プロファイルで web intent が転送されない場合。
         // 黙って何も起きないと、全文へ辿り着く手段がなくなる。

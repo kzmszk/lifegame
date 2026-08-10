@@ -45,6 +45,13 @@ android {
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+
+    testOptions {
+        // Robolectric は実機ではなく JVM 上で画面を組み立てるので、テーマや文字列を
+        // 解決するのに merged resources が要る。これが false だと画面のテストは
+        // 「リソースが見つからない」で落ちる。
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -61,4 +68,12 @@ dependencies {
     implementation("androidx.health.connect:connect-client:1.1.0")
 
     testImplementation("junit:junit:4.13.2")
+
+    // 画面のテストは JVM 上 (Robolectric) で回す。実機・エミュレータを CI に用意すると
+    // androidTest 一式と AVD の起動時間を抱えることになるので、そこまでは要らない。
+    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("androidx.test.ext:junit:1.2.1")
+    testImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
