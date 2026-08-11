@@ -25,14 +25,25 @@ class HealthDataTest {
 
     // ADR 0001: 権限画面の要約は3点に固定する。ここが増えると全文との乖離が始まる。
     @Test
-    fun `the on-device summary stays at the three points fixed by ADR 0001`() {
+    fun `the on-device summary stays at the four points fixed by ADR 0001`() {
         assertEquals(
             listOf(
                 "読み取るのは体重測定・運動実績・睡眠実績の3種類だけです。",
-                "読み取った内容を端末の外へ送信しません。",
+                "体重測定と運動実績は、あなたが同期を押したときだけ lifegame（lifegame.tachicoma.com）へ送ります。",
+                "睡眠実績は端末の外へ送りません。自動での送信もしません。",
                 "第三者提供・広告・分析には使いません。",
             ),
             PrivacyPolicy.summary,
+        )
+    }
+
+    // 要約と全文が食い違うのが ADR 0001 が恐れている状態で、いちばん起きやすいのが
+    // 「送らない」と書いたまま送り始めることなので、その一点だけ機械で見張る。
+    @Test
+    fun `the summary no longer claims that nothing leaves the device`() {
+        assertEquals(
+            emptyList<String>(),
+            PrivacyPolicy.summary.filter { it.contains("読み取った内容を端末の外へ送信しません") },
         )
     }
 

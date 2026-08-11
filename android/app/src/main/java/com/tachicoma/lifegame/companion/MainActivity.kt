@@ -309,7 +309,9 @@ class PermissionsRationaleActivity : ComponentActivity() {
                         Text("lifegame 健康確認のプライバシー説明", style = MaterialTheme.typography.headlineSmall)
                         // 権限を判断するその場で読めることに意味があるので要約を残す。
                         // ただし細部は書かず、全文が正であることを画面上で明示する。
-                        Text("要点は次の3つです。")
+                        // 件数はリストから数える。ADR 0001 が点数を動かしたとき、
+                        // 本文だけが古い数を言い続けるのを型で防ぐ手段がないため。
+                        Text("要点は次の${PrivacyPolicy.summary.size}つです。")
                         PrivacyPolicy.summary.forEach { point -> Text("・$point") }
                         Text(
                             "全文はWebで公開しているものが正式な内容です。",
