@@ -35,10 +35,18 @@ import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var screenState by mutableStateOf(HealthConnectScreenState())
+    private val oauthManager by lazy { LifegameOAuthManager(applicationContext) }
+    private val syncTokenStore by lazy { HealthSyncTokenStore(applicationContext) }
+    private val syncResultStore by lazy { HealthSyncResultStore(applicationContext) }
+    private var authorizationCallbackReceived = false
 
     private val permissionLauncher = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
@@ -48,6 +56,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (oauthManager.hasPendingAuthorization()) {
+            screenState = screenState.copy(
+                isSyncing = true,
+                syncMessage = "ブラウザでlifegameへの接続を許可してください。",
+            )
+        }
+        syncResultStore.load()?.let { result ->
+            screenState = screenState.copy(lastSyncedAt = result.completedAt, lastSyncResult = result)
+        }
         setContent {
             LifegameCompanionTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -58,13 +75,62 @@ class MainActivity : ComponentActivity() {
                             if (missing.isNotEmpty()) permissionLauncher.launch(missing)
                         },
                         onRefresh = ::refresh,
+                        onSyncNow = ::syncNow,
                         onOpenSettings = ::openHealthConnectSettings,
                         onOpenPrivacyPolicy = { openPrivacyPolicy() },
                     )
                 }
             }
         }
-        refresh()
+        if (intent.isLifegameOAuthCallback()) {
+            authorizationCallbackReceived = true
+            handleAuthorizationCallback(intent)
+        } else {
+            refresh()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (
+            !intent.isLifegameOAuthCallback() &&
+            oauthManager.hasPendingAuthorization() &&
+            !authorizationCallbackReceived
+        ) {
+            oauthManager.cancelPendingAuthorization()
+            screenState = screenState.copy(
+                isSyncing = false,
+                syncMessage = null,
+                errorMessage = "接続がキャンセルされました。",
+            )
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (!intent.isLifegameOAuthCallback()) return
+        authorizationCallbackReceived = true
+        handleAuthorizationCallback(intent)
+    }
+
+    private fun handleAuthorizationCallback(intent: Intent) {
+        if (!oauthManager.hasPendingAuthorization()) return
+        screenState = screenState.copy(syncMessage = "lifegameとの接続を確認しています…")
+        lifecycleScope.launch {
+            try {
+                oauthManager.completeAuthorization(intent)
+                syncNowWithToken()
+            } catch (error: OAuthInvalidClientException) {
+                if (restartAuthorizationAfterInvalidClient()) return@launch
+                showSyncError(error, "lifegameとの接続に失敗しました。")
+            } catch (error: SyncClientRegistrationInvalidException) {
+                if (restartAuthorizationAfterInvalidClient()) return@launch
+                showSyncError(error, "lifegameとの接続に失敗しました。")
+            } catch (error: Exception) {
+                showSyncError(error, "lifegameとの接続に失敗しました。")
+            }
+        }
     }
 
     private fun refresh() {
@@ -77,32 +143,121 @@ class MainActivity : ComponentActivity() {
                     try {
                         val client = HealthConnectClient.getOrCreate(this@MainActivity)
                         val result = HealthConnectReader(client).read()
-                        screenState = HealthConnectScreenState(
+                        screenState = screenState.copy(
                             availability = HealthConnectAvailability.AVAILABLE,
                             grantedPermissions = result.grantedPermissions,
                             summaries = result.summaries,
+                            isRefreshing = false,
+                            errorMessage = null,
                         )
                     } catch (_: Exception) {
-                        screenState = HealthConnectScreenState(
+                        screenState = screenState.copy(
                             availability = HealthConnectAvailability.AVAILABLE,
+                            isRefreshing = false,
                             errorMessage = "Health Connectの状態を確認できませんでした。もう一度試してください。",
                         )
                     }
                 }
 
                 HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
-                    screenState = HealthConnectScreenState(
+                    screenState = screenState.copy(
                         availability = HealthConnectAvailability.PROVIDER_UPDATE_REQUIRED,
+                        isRefreshing = false,
                     )
                 }
 
                 else -> {
-                    screenState = HealthConnectScreenState(
+                    screenState = screenState.copy(
                         availability = HealthConnectAvailability.UNAVAILABLE,
+                        isRefreshing = false,
                     )
                 }
             }
         }
+    }
+
+    private fun syncNow() {
+        if (screenState.isSyncing || screenState.isRefreshing) return
+        oauthManager.resetRegistrationRecovery()
+        authorizationCallbackReceived = false
+        screenState = screenState.copy(
+            isSyncing = true,
+            syncMessage = "lifegameとの接続を確認しています…",
+            errorMessage = null,
+        )
+        lifecycleScope.launch {
+            try {
+                if (!oauthManager.hasAccessToken()) {
+                    oauthManager.beginAuthorization(this@MainActivity)
+                    screenState = screenState.copy(syncMessage = "ブラウザでlifegameへの接続を許可してください。")
+                } else {
+                    syncNowWithToken()
+                }
+            } catch (error: SyncClientRegistrationInvalidException) {
+                if (restartAuthorizationAfterInvalidClient()) return@launch
+                showSyncError(error, "同期に失敗しました。")
+            } catch (error: Exception) {
+                showSyncError(error, "同期に失敗しました。")
+            }
+        }
+    }
+
+    private suspend fun restartAuthorizationAfterInvalidClient(): Boolean {
+        if (!oauthManager.retryRegistrationAfterInvalidClient()) return false
+        try {
+            oauthManager.beginAuthorization(this@MainActivity)
+        } catch (error: Exception) {
+            showSyncError(error, "再登録に失敗しました。")
+            return true
+        }
+        screenState = screenState.copy(
+            isSyncing = true,
+            syncMessage = "接続登録を更新しました。ブラウザで再度許可してください。",
+            errorMessage = null,
+        )
+        return true
+    }
+
+    private fun showSyncError(error: Exception, fallback: String) {
+        screenState = screenState.copy(
+            isSyncing = false,
+            syncMessage = null,
+            errorMessage = error.userMessage(fallback),
+        )
+    }
+
+    private suspend fun syncNowWithToken() {
+        screenState = screenState.copy(syncMessage = "Health Connectから同期対象を読み取っています…")
+        val client = HealthConnectClient.getOrCreate(this@MainActivity)
+        val readResult = HealthConnectReader(client).readChanges(syncTokenStore)
+        val payload = HealthSyncPayloadBuilder.build(readResult.records)
+        val syncClient = LifegameSyncClient(oauthManager)
+        var accepted = 0
+        payload.batches.forEachIndexed { index, batch ->
+            screenState = screenState.copy(
+                syncMessage = "lifegameへ送信しています… (${index + 1}/${payload.batches.size})",
+            )
+            accepted += syncClient.post(batch.body)
+        }
+        // A token advances only after every batch was accepted. A failed POST retries the same
+        // changes next time, while external_id upsert keeps retries safe on the server.
+        syncTokenStore.save(HealthSyncTokenPolicy.tokensToSave(readResult.nextTokens, payload.skippedTypes))
+        val completedAt = Instant.now()
+        val syncResult = HealthSyncResult(
+            sentCount = payload.sentCount,
+            acceptedCount = accepted,
+            skippedCount = payload.skippedCount,
+            completedAt = completedAt,
+        )
+        syncResultStore.save(syncResult)
+        screenState = screenState.copy(
+            isSyncing = false,
+            syncMessage = null,
+            lastSyncedAt = completedAt,
+            lastSyncResult = syncResult,
+            errorMessage = null,
+        )
+        refresh()
     }
 
     private fun openHealthConnectSettings() {
@@ -117,6 +272,7 @@ private fun HealthConnectScreen(
     state: HealthConnectScreenState,
     onRequestPermissions: () -> Unit,
     onRefresh: () -> Unit,
+    onSyncNow: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenPrivacyPolicy: () -> Unit,
 ) {
@@ -137,7 +293,7 @@ private fun HealthConnectScreen(
             fontWeight = FontWeight.Bold,
         )
         Text(
-            text = "Health Connectの直近30日の健康記録を、この端末の画面だけで確認します。",
+            text = "Health Connectの直近30日の健康記録を確認します。体重測定と運動実績は手動で同期できます。",
             style = MaterialTheme.typography.bodyLarge,
         )
 
@@ -166,9 +322,34 @@ private fun HealthConnectScreen(
                 ) {
                     Text("再読み込み")
                 }
-                if (state.isRefreshing) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = onSyncNow,
+                    enabled = !state.isSyncing && !state.isRefreshing,
+                ) {
+                    Text("今すぐ同期")
+                }
+                if (state.isRefreshing || state.isSyncing) {
                     CircularProgressIndicator(
                         modifier = Modifier.align(Alignment.CenterVertically),
+                    )
+                }
+            }
+            state.syncMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium)
+            }
+            state.lastSyncedAt?.let {
+                Text("最終同期: ${formatSyncTime(it)}", style = MaterialTheme.typography.bodyMedium)
+            }
+            state.lastSyncResult?.let { result ->
+                Text(
+                    "直近の同期: 送信 ${result.sentCount}件・受理 ${result.acceptedCount}件",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (result.skippedCount > 0) {
+                    Text(
+                        "未同期のまま端末に残っている記録: ${result.skippedCount}件（次回も同期対象です）",
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }
@@ -176,13 +357,28 @@ private fun HealthConnectScreen(
 
         HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
         Text(
-            text = "この試作版は読み取り専用です。体重測定・運動実績・睡眠実績を端末内に表示するだけで、Health Connectへの書き込み、lifegameサーバーへの送信、バックグラウンド同期は行いません。",
+            text = "体重測定と運動実績は、今すぐ同期を押したときだけlifegameへ送信します。睡眠実績は送信せず、自動同期も行いません。",
             style = MaterialTheme.typography.bodyMedium,
         )
         OutlinedButton(onClick = onOpenPrivacyPolicy) {
             Text("プライバシーポリシーの全文を開く")
         }
     }
+}
+
+private fun formatSyncTime(instant: Instant): String =
+    DateTimeFormatter.ofPattern("yyyy年M月d日 HH:mm", Locale.JAPAN)
+        .withZone(ZoneId.systemDefault())
+        .format(instant)
+
+private fun Intent.isLifegameOAuthCallback(): Boolean =
+    data?.scheme == LIFEGAME_REDIRECT_URI.substringBefore(':')
+
+private fun Exception.userMessage(fallback: String): String = when (this) {
+    is SyncAuthenticationRequiredException -> message ?: "再接続してください。"
+    is SyncApiException -> message ?: fallback
+    is OAuthException -> message ?: fallback
+    else -> fallback
 }
 
 @Composable
@@ -262,8 +458,8 @@ private fun SummaryCard(summary: HealthDataSummary) {
 }
 
 /**
- * ADR 0001: 全文は ACTION_VIEW でブラウザに渡す。Intent の起動に INTERNET 権限は要らないので、
- * アプリはネットワーク権限を持たないまま公開ポリシーへ導線を張れる。
+ * ADR 0001: 全文は ACTION_VIEW でブラウザに渡す。アプリは手動同期のため INTERNET 権限を
+ * 持つが、ポリシー本文の表示と認証セッションはChromeに委ねる。
  *
  * 生成を startActivity から切り離してあるのは、何を投げているかをテストから直接読めるようにするため。
  */
