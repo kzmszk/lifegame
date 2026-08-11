@@ -19,16 +19,22 @@ object HealthPermissions {
 /**
  * ADR 0001: the public page is the single source of truth for the privacy policy.
  *
- * The rationale screen only repeats the three points below, so that editing the details of the
- * full text never leaves the on-device wording saying something different. Both the rationale
- * screen and the main screen open the same URL.
+ * The rationale screen only repeats the points below, so that editing the details of the full
+ * text never leaves the on-device wording saying something different. Both the rationale screen
+ * and the main screen open the same URL.
+ *
+ * Sending splits the second point into three facts a reader has to have before granting the
+ * permission — what leaves the device, where it goes, and when — so ADR 0001 fixes the summary at
+ * four points rather than making one sentence carry all of it. Sleep gets its own line because
+ * "we read it but never send it" is the kind of distinction that disappears inside a longer one.
  */
 object PrivacyPolicy {
     const val URL = "https://lifegame.tachicoma.com/privacy"
 
     val summary: List<String> = listOf(
         "読み取るのは体重測定・運動実績・睡眠実績の3種類だけです。",
-        "読み取った内容を端末の外へ送信しません。",
+        "体重測定と運動実績は、あなたが同期を押したときだけ lifegame（lifegame.tachicoma.com）へ送ります。",
+        "睡眠実績は端末の外へ送りません。自動での送信もしません。",
         "第三者提供・広告・分析には使いません。",
     )
 }

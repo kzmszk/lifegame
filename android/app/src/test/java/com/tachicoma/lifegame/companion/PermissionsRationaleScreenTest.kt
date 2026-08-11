@@ -30,7 +30,7 @@ class PermissionsRationaleScreenTest {
     val composeRule = createAndroidComposeRule<PermissionsRationaleActivity>()
 
     @Test
-    fun `the three summary points are actually rendered on the rationale screen`() {
+    fun `every summary point is actually rendered on the rationale screen`() {
         PrivacyPolicy.summary.forEach { point ->
             composeRule.onNodeWithText("・$point").performScrollTo().assertIsDisplayed()
         }
