@@ -4,8 +4,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Looper
+import androidx.compose.runtime.MutableState
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
@@ -74,5 +76,54 @@ class MainActivityAuthorizationTest {
         shadowOf(Looper.getMainLooper()).idle()
 
         assertFalse(LifegameOAuthManager(context).hasPendingAuthorization())
+    }
+
+    @Test
+    fun `after a callback a new authorization can still be cancelled`() {
+        oauthPreferences.edit()
+            .putString("pending_state", "first-state")
+            .putString("pending_verifier", "first-verifier")
+            .apply()
+        val callback = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("com.tachicoma.lifegame.companion:/oauth2redirect?state=first-state&error=access_denied"),
+        )
+        val controller = Robolectric.buildActivity(MainActivity::class.java, callback).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        val activity = controller.get()
+
+        assertFalse(activity.intent.data?.scheme == LIFEGAME_REDIRECT_URI.substringBefore(':'))
+
+        oauthPreferences.edit()
+            .putString("pending_state", "second-state")
+            .putString("pending_verifier", "second-verifier")
+            .apply()
+        updateScreenState(activity) { copy(isSyncing = true, syncMessage = "ブラウザで許可してください。", syncErrorMessage = null) }
+
+        controller.pause().resume()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val state = screenState(activity)
+        assertFalse(state.isSyncing)
+        assertEquals("接続がキャンセルされました。", state.syncErrorMessage)
+        assertFalse(LifegameOAuthManager(context).hasPendingAuthorization())
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun screenState(activity: MainActivity): HealthConnectScreenState {
+        val field = MainActivity::class.java.getDeclaredField("screenState\$delegate")
+        field.isAccessible = true
+        return (field.get(activity) as MutableState<HealthConnectScreenState>).value
+    }
+
+    private fun updateScreenState(
+        activity: MainActivity,
+        update: HealthConnectScreenState.() -> HealthConnectScreenState,
+    ) {
+        val field = MainActivity::class.java.getDeclaredField("screenState\$delegate")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val state = field.get(activity) as MutableState<HealthConnectScreenState>
+        state.value = state.value.update()
     }
 }

@@ -115,7 +115,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleAuthorizationCallback(intent: Intent) {
-        if (!oauthManager.hasPendingAuthorization()) return
+        // A callback intent is a one-shot delivery mechanism. Keeping it on the Activity makes
+        // the next browser cancellation look like another callback forever.
+        setIntent(Intent(this, MainActivity::class.java))
+        if (!oauthManager.hasPendingAuthorization()) {
+            authorizationCallbackReceived = false
+            return
+        }
         screenState = screenState.copy(syncMessage = "lifegameとの接続を確認しています…")
         lifecycleScope.launch {
             try {
@@ -129,6 +135,8 @@ class MainActivity : ComponentActivity() {
                 showSyncError(error, "lifegameとの接続に失敗しました。")
             } catch (error: Exception) {
                 showSyncError(error, "lifegameとの接続に失敗しました。")
+            } finally {
+                authorizationCallbackReceived = false
             }
         }
     }

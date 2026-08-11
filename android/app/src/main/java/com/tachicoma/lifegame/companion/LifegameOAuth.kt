@@ -12,6 +12,9 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -40,10 +43,56 @@ private data class OAuthMetadata(
     val registrationEndpoint: String,
 )
 
-private data class HttpResponse(
+internal data class OAuthHttpResponse(
     val statusCode: Int,
     val body: String,
 )
+
+internal fun interface OAuthHttpClient {
+    fun request(
+        method: String,
+        url: String,
+        body: String?,
+        contentType: String?,
+        authorization: String?,
+    ): OAuthHttpResponse
+}
+
+private object NetworkOAuthHttpClient : OAuthHttpClient {
+    override fun request(
+        method: String,
+        url: String,
+        body: String?,
+        contentType: String?,
+        authorization: String?,
+    ): OAuthHttpResponse {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            doInput = true
+            setRequestProperty("Accept", "application/json")
+            contentType?.let { setRequestProperty("Content-Type", it) }
+            authorization?.let { setRequestProperty("Authorization", "Bearer $it") }
+        }
+        return try {
+            if (body != null) {
+                connection.doOutput = true
+                connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+            }
+            val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+            val responseBody = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+            OAuthHttpResponse(connection.responseCode, responseBody)
+        } finally {
+            connection.disconnect()
+        }
+    }
+}
+
+internal const val OAUTH_CLIENT_REGISTRATION_MAX_AGE_DAYS = 6L
+
+internal fun isClientRegistrationFresh(registeredAt: Instant?, now: Instant): Boolean =
+    registeredAt != null && now.isBefore(registeredAt.plus(Duration.ofDays(OAUTH_CLIENT_REGISTRATION_MAX_AGE_DAYS)))
 
 /** Pure DCR request construction; JSONObject does not turn Kotlin collections into arrays. */
 internal fun oauthRegistrationRequestBody(redirectUri: String = LIFEGAME_REDIRECT_URI): String = JSONObject()
@@ -56,7 +105,11 @@ internal fun oauthRegistrationRequestBody(redirectUri: String = LIFEGAME_REDIREC
     .toString()
 
 /** Cloudflare OAuth public-client flow used by the foreground sync button. */
-class LifegameOAuthManager(context: Context) {
+class LifegameOAuthManager internal constructor(
+    context: Context,
+    private val clock: Clock = Clock.systemUTC(),
+    private val httpClient: OAuthHttpClient = NetworkOAuthHttpClient,
+) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     // This is a sideloaded private app and allowBackup=false, so app-only SharedPreferences is
@@ -81,6 +134,7 @@ class LifegameOAuthManager(context: Context) {
         preferences.edit()
             .putBoolean(KEY_REGISTRATION_RECOVERY_ATTEMPTED, true)
             .remove(KEY_CLIENT_ID)
+            .remove(KEY_CLIENT_REGISTERED_AT)
             .remove(KEY_ACCESS_TOKEN)
             .remove(KEY_REFRESH_TOKEN)
             .remove(KEY_PENDING_STATE)
@@ -92,8 +146,8 @@ class LifegameOAuthManager(context: Context) {
     suspend fun beginAuthorization(activity: Activity) {
         val metadata = withContext(Dispatchers.IO) { fetchMetadata() }
         val clientId = withContext(Dispatchers.IO) {
-            preferences.getString(KEY_CLIENT_ID, null)?.takeIf(String::isNotBlank)
-                ?: register(metadata).also { id -> preferences.edit().putString(KEY_CLIENT_ID, id).apply() }
+            reusableClientId()
+                ?: register(metadata).also { id -> saveClientRegistration(id) }
         }
         val verifier = generateRandomString()
         val state = UUID.randomUUID().toString()
@@ -200,13 +254,14 @@ class LifegameOAuthManager(context: Context) {
     fun clearTokens() {
         preferences.edit()
             .remove(KEY_CLIENT_ID)
+            .remove(KEY_CLIENT_REGISTERED_AT)
             .remove(KEY_ACCESS_TOKEN)
             .remove(KEY_REFRESH_TOKEN)
             .apply()
     }
 
     private fun fetchMetadata(): OAuthMetadata {
-        val response = request("GET", OAUTH_METADATA_URL, null, null, null)
+        val response = httpClient.request("GET", OAUTH_METADATA_URL, null, null, null)
         if (response.statusCode !in 200..299) throw OAuthException(errorMessage(response.body, response.statusCode))
         val json = JSONObject(response.body)
         return OAuthMetadata(
@@ -217,7 +272,7 @@ class LifegameOAuthManager(context: Context) {
     }
 
     private fun register(metadata: OAuthMetadata): String {
-        val response = request(
+        val response = httpClient.request(
             method = "POST",
             url = metadata.registrationEndpoint,
             body = oauthRegistrationRequestBody(),
@@ -228,49 +283,22 @@ class LifegameOAuthManager(context: Context) {
         return JSONObject(response.body).requiredString("client_id")
     }
 
-    private fun requestToken(endpoint: String, parameters: Map<String, String>): HttpResponse {
+    private fun requestToken(endpoint: String, parameters: Map<String, String>): OAuthHttpResponse {
         val body = parameters.entries.joinToString("&") { (key, value) ->
             "${urlEncode(key)}=${urlEncode(value)}"
         }
-        return request("POST", endpoint, body, "application/x-www-form-urlencoded", null)
+        return httpClient.request("POST", endpoint, body, "application/x-www-form-urlencoded", null)
     }
 
     private fun saveTokenResponse(json: JSONObject, existingRefreshToken: String?) {
         val accessToken = json.optString("access_token").takeIf(String::isNotBlank)
             ?: throw OAuthException("access tokenを受け取れませんでした。")
         val refreshToken = json.optString("refresh_token").takeIf(String::isNotBlank) ?: existingRefreshToken
-        val editor = preferences.edit().putString(KEY_ACCESS_TOKEN, accessToken)
+        val editor = preferences.edit()
+            .putString(KEY_ACCESS_TOKEN, accessToken)
+            .putLong(KEY_CLIENT_REGISTERED_AT, clock.millis())
         if (refreshToken != null) editor.putString(KEY_REFRESH_TOKEN, refreshToken)
         editor.apply()
-    }
-
-    private fun request(
-        method: String,
-        url: String,
-        body: String?,
-        contentType: String?,
-        authorization: String?,
-    ): HttpResponse {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            doInput = true
-            setRequestProperty("Accept", "application/json")
-            contentType?.let { setRequestProperty("Content-Type", it) }
-            authorization?.let { setRequestProperty("Authorization", "Bearer $it") }
-        }
-        return try {
-            if (body != null) {
-                connection.doOutput = true
-                connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
-            }
-            val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-            val responseBody = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
-            HttpResponse(connection.responseCode, responseBody)
-        } finally {
-            connection.disconnect()
-        }
     }
 
     private fun JSONObject.requiredString(key: String): String = optString(key).takeIf(String::isNotBlank)
@@ -281,7 +309,27 @@ class LifegameOAuthManager(context: Context) {
             ?: JSONObject(body).optString("error").takeIf(String::isNotBlank)
     }.getOrNull() ?: "OAuth通信に失敗しました（HTTP $statusCode）。"
 
-    private fun HttpResponse.isInvalidClient(): Boolean = isInvalidClientResponse(statusCode, body)
+    private fun OAuthHttpResponse.isInvalidClient(): Boolean = isInvalidClientResponse(statusCode, body)
+
+    private fun reusableClientId(): String? {
+        val clientId = preferences.getString(KEY_CLIENT_ID, null)?.takeIf(String::isNotBlank) ?: return null
+        val registeredAtMillis = preferences.getLong(KEY_CLIENT_REGISTERED_AT, Long.MIN_VALUE)
+        val registeredAt = registeredAtMillis.takeIf { it != Long.MIN_VALUE }?.let(Instant::ofEpochMilli)
+        if (isClientRegistrationFresh(registeredAt, clock.instant())) return clientId
+
+        preferences.edit()
+            .remove(KEY_CLIENT_ID)
+            .remove(KEY_CLIENT_REGISTERED_AT)
+            .apply()
+        return null
+    }
+
+    private fun saveClientRegistration(clientId: String) {
+        preferences.edit()
+            .putString(KEY_CLIENT_ID, clientId)
+            .putLong(KEY_CLIENT_REGISTERED_AT, clock.millis())
+            .apply()
+    }
 
     private fun pendingAuthorizationState(): Pair<String, String>? {
         val state = preferences.getString(KEY_PENDING_STATE, null)?.takeIf(String::isNotBlank) ?: return null
@@ -303,6 +351,7 @@ class LifegameOAuthManager(context: Context) {
     private companion object {
         const val PREFERENCES_NAME = "lifegame.oauth"
         const val KEY_CLIENT_ID = "client_id"
+        const val KEY_CLIENT_REGISTERED_AT = "client_registered_at"
         const val KEY_ACCESS_TOKEN = "access_token"
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_PENDING_STATE = "pending_state"
