@@ -8,7 +8,8 @@ Health Connectから体重測定・運動実績・睡眠実績を読み取り、
 - `android.permission.health.READ_EXERCISE`
 - `android.permission.health.READ_SLEEP`
 
-Health Connectへの書き込み、履歴（30日より前）・バックグラウンド・運動ルートの権限、lifegameサーバーへの通信は実装していません。画面を閉じている間に同期もしません。
+Health Connectへの書き込み、履歴（30日より前）・バックグラウンド・運動ルートの権限は使いません。
+「今すぐ同期」を押したときだけ、体重測定と運動実績をlifegameサーバーへ送ります。睡眠実績は送信せず、画面を閉じている間の同期もしません。
 
 ## debug APKを作る
 

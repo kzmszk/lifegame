@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- This prototype is read-only: no WRITE, history, background, route, or network permission. -->
+    <!-- The app only reads Health Connect and sends selected records after a foreground tap. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.health.READ_WEIGHT" />
     <uses-permission android:name="android.permission.health.READ_EXERCISE" />
     <uses-permission android:name="android.permission.health.READ_SLEEP" />
@@ -38,10 +40,23 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!--
+                OAuth の戻り先。RFC 8252 が native app に勧めている private-use URI scheme で、
+                host を持たないのが正しい形。lint の AppLinkUrlError は web の deep link を想定して
+                host を要求するが、これは web link ではないので当てはまらない。host を足すと
+                redirect_uri が変わり、サーバーに登録済みの値と一致しなくなる。
+            -->
+            <intent-filter tools:ignore="AppLinkUrlError">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.tachicoma.lifegame.companion" android:path="/oauth2redirect" />
             </intent-filter>
         </activity>
     </application>
