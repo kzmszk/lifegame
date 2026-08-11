@@ -104,6 +104,9 @@ data class HealthConnectScreenState(
     val errorMessage: String? = null,
     val isSyncing: Boolean = false,
     val syncMessage: String? = null,
+    // Kept apart from errorMessage, which belongs to the Health Connect card at the top of the
+    // page. A sync failure reported up there is off-screen from the button that caused it.
+    val syncErrorMessage: String? = null,
     val lastSyncedAt: Instant? = null,
     val lastSyncResult: HealthSyncResult? = null,
 )
@@ -119,6 +122,19 @@ object HealthReadWindow {
     const val DAYS = 30L
 
     fun start(now: Instant): Instant = now.minus(Duration.ofDays(DAYS))
+}
+
+/**
+ * The one place a session length becomes whole minutes. The screen and the payload both go
+ * through it so the same session cannot read 9分 on the device and arrive as 10 in lifegame,
+ * which is what happened while the screen floored and the payload rounded.
+ */
+object HealthDuration {
+    fun roundedMinutes(start: Instant, end: Instant): Long {
+        val seconds = Duration.between(start, end).seconds
+        if (seconds <= 0L) return 0L
+        return seconds / 60L + if (seconds % 60L >= 30L) 1L else 0L
+    }
 }
 
 /** Records that are eligible for the write-only /sync endpoint. Sleep is deliberate here. */
@@ -356,13 +372,8 @@ object HealthSyncPayloadBuilder {
         return OffsetDateTime.ofInstant(instant, offset).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
     }
 
-    private fun validDurationMinutes(start: Instant, end: Instant): Int? {
-        val duration = Duration.between(start, end)
-        if (duration.isNegative || duration.isZero) return null
-        val wholeMinutes = duration.seconds / 60L
-        val minutes = wholeMinutes + if (duration.seconds % 60L >= 30L) 1L else 0L
-        return minutes.takeIf { it in 1L..1440L }?.toInt()
-    }
+    private fun validDurationMinutes(start: Instant, end: Instant): Int? =
+        HealthDuration.roundedMinutes(start, end).takeIf { it in 1L..1440L }?.toInt()
 
     private fun hasControlCharacter(value: String): Boolean = value.any { character ->
         character.code in 0..31 || character.code in 127..159
@@ -464,7 +475,7 @@ object HealthSummaryFormatter {
     }
 
     fun formatDuration(start: Instant, end: Instant): String {
-        val minutes = Duration.between(start, end).toMinutes().coerceAtLeast(0)
+        val minutes = HealthDuration.roundedMinutes(start, end)
         val hours = minutes / 60
         val remainder = minutes % 60
         return when {

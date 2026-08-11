@@ -28,6 +28,18 @@ class HealthSyncPayloadTest {
         assertFalse(result.batches.single().body.contains("睡眠"))
     }
 
+    // The device reported 9分 for a session lifegame stored as 10 because the screen floored
+    // while the payload rounded. Both now read the same session the same way.
+    @Test
+    fun `the screen and the payload agree on how long a session was`() {
+        val end = instant.plusSeconds(9 * 60L + 41)
+        val sent = HealthSyncPayloadBuilder.build(listOf(exercise("walk", end = end)), zone)
+            .batches.single().records.single().durationMinutes
+
+        assertEquals(10, sent)
+        assertEquals("${sent}分", HealthSummaryFormatter.formatDuration(instant, end))
+    }
+
     @Test
     fun `payload fields are exclusive to their record kind`() {
         val body = HealthSyncPayloadBuilder.build(

@@ -101,7 +101,7 @@ class MainActivity : ComponentActivity() {
             screenState = screenState.copy(
                 isSyncing = false,
                 syncMessage = null,
-                errorMessage = "接続がキャンセルされました。",
+                syncErrorMessage = "接続がキャンセルされました。",
             )
         }
     }
@@ -183,7 +183,7 @@ class MainActivity : ComponentActivity() {
         screenState = screenState.copy(
             isSyncing = true,
             syncMessage = "lifegameとの接続を確認しています…",
-            errorMessage = null,
+            syncErrorMessage = null,
         )
         lifecycleScope.launch {
             try {
@@ -213,7 +213,7 @@ class MainActivity : ComponentActivity() {
         screenState = screenState.copy(
             isSyncing = true,
             syncMessage = "接続登録を更新しました。ブラウザで再度許可してください。",
-            errorMessage = null,
+            syncErrorMessage = null,
         )
         return true
     }
@@ -222,7 +222,7 @@ class MainActivity : ComponentActivity() {
         screenState = screenState.copy(
             isSyncing = false,
             syncMessage = null,
-            errorMessage = error.userMessage(fallback),
+            syncErrorMessage = error.userMessage(fallback),
         )
     }
 
@@ -255,7 +255,7 @@ class MainActivity : ComponentActivity() {
             syncMessage = null,
             lastSyncedAt = completedAt,
             lastSyncResult = syncResult,
-            errorMessage = null,
+            syncErrorMessage = null,
         )
         refresh()
     }
@@ -268,7 +268,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun HealthConnectScreen(
+internal fun HealthConnectScreen(
     state: HealthConnectScreenState,
     onRequestPermissions: () -> Unit,
     onRefresh: () -> Unit,
@@ -337,6 +337,13 @@ private fun HealthConnectScreen(
             }
             state.syncMessage?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium)
+            }
+            state.syncErrorMessage?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
             state.lastSyncedAt?.let {
                 Text("最終同期: ${formatSyncTime(it)}", style = MaterialTheme.typography.bodyMedium)
