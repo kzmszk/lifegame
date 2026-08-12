@@ -631,7 +631,9 @@ DB 制約は競合や実装漏れを含む不正状態の保存を最後に拒�
 DB モジュールの公開境界は次の4操作に絞る。SQL、制約エラーの解釈、安定した並び順、
 ページングは `src/db/health-entries.ts` の内側に隠し、実 D1 を使うテストをこの境界に対して書く。
 
-- `listHealthEntries({ from?, to?, limit, offset })`
+- `listHealthEntries({ from?, to?, kind?, limit, offset })` — `kind` は1種類への絞り込みで、
+  省略すると3種類すべて。**ページを切る前に `WHERE` として適用する**。返ってきたページを
+  呼び出し側で絞ると、1ページ目に入った分しか出ないのに全部だと見えるため
 - `createHealthEntry(input)`
 - `updateHealthEntry(id, input)`
 - `deleteHealthEntry(id)`
