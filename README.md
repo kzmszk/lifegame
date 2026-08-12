@@ -185,9 +185,11 @@ companion は public client (`token_endpoint_auth_method: none`) + PKCE S256 で
   何度送っても行は増えない。差分同期が同じ record を再送する前提の設計
 - 手入力の記録は `external_id` を持たず、SQLite は UNIQUE index の NULL を別物として扱うので、
   同期が手入力の行に当たることはない。lifegame で付けた `note` も upsert では上書きしない
-- 睡眠実績は `health_entries` に入れる形がないので、黙って捨てずに 400 で拒否する
-  （受理したことにすると端末が changes token を進めて二度と再送しない）。長すぎる `activity` も
-  同じ理由で切り詰めず拒否する
+- 睡眠実績は `occurred_at` に**起床の瞬間**を送る。サーバーはそこからローカル日付を導出するので、
+  一晩は寝入った日ではなく起きた朝に付く。23:30 就寝と 01:00 就寝が同じ日に寄るのはこのため
+- 睡眠には長さが必須。運動と違って、長さの無い一晩は「寝た」以上を何も言わないので拒否する
+- 知らない `kind` は黙って捨てずに 400 で拒否する（受理したことにすると端末が changes token を
+  進めて二度と再送しない）。長すぎる `activity` も同じ理由で切り詰めず拒否する
 - `occurred_at` のオフセット `-00:00` は RFC 3339 で「不明」を意味するため拒否する。ローカル日付を
   導出できないので。UTC なら `Z` か `+00:00` を送る
 - 削除は同期しない。Health Connect の削除 change は record type を含まないため。lifegame 側で消す

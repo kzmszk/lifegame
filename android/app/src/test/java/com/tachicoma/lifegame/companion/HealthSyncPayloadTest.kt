@@ -12,20 +12,44 @@ class HealthSyncPayloadTest {
     private val zone = ZoneId.of("Asia/Tokyo")
     private val instant = Instant.parse("2026-08-10T00:00:00Z")
 
+    // A night is filed under the morning it was slept into, so the payload carries the wake
+    // end. Sending the start would put a 23:30 bedtime on the previous day and a 01:00 one
+    // on the next, splitting consecutive nights across three dates.
     @Test
-    fun `sleep records never appear in the payload`() {
+    fun `a sleep session is sent as the instant it ended`() {
+        val start = Instant.parse("2026-08-10T14:30:00Z") // 23:30 JST
+        val end = Instant.parse("2026-08-10T22:00:00Z") // 07:00 JST the next day
         val result = HealthSyncPayloadBuilder.build(
-            listOf(
-                HealthSyncRecord.Sleep("sleep-1", instant, instant.plusSeconds(3600), "睡眠"),
-                weight("weight-1"),
-            ),
+            listOf(HealthSyncRecord.Sleep("sleep-1", start, end, ZoneOffset.ofHours(9))),
             zone,
         )
 
-        assertEquals(1, result.sentCount)
-        assertEquals(0, result.skippedCount)
-        assertFalse(result.batches.single().body.contains("sleep"))
-        assertFalse(result.batches.single().body.contains("睡眠"))
+        val record = result.batches.single().records.single()
+        assertEquals(HealthSyncKind.SLEEP, record.kind)
+        assertEquals("2026-08-11T07:00:00+09:00", record.occurredAt)
+        assertEquals(450, record.durationMinutes)
+
+        val body = result.batches.single().body
+        assertTrue(body.contains("\"kind\":\"sleep\""))
+        assertTrue(body.contains("\"duration_minutes\":450"))
+        // The server refuses a sleep record carrying either of these.
+        assertFalse(body.contains("weight_kg"))
+        assertFalse(body.contains("activity"))
+    }
+
+    // The server requires a length on a sleep record, so one the builder cannot measure has
+    // to be held back rather than sent without it. Skipping also keeps the changes token for
+    // sleep unsaved, so the session comes round again instead of being lost.
+    @Test
+    fun `a sleep session with no usable length is skipped`() {
+        val result = HealthSyncPayloadBuilder.build(
+            listOf(HealthSyncRecord.Sleep("sleep-1", instant, instant, ZoneOffset.UTC)),
+            zone,
+        )
+
+        assertEquals(0, result.sentCount)
+        assertEquals(1, result.skippedCount)
+        assertTrue(result.skippedTypes.contains(HealthSyncType.SLEEP))
     }
 
     // The device reported 9分 for a session lifegame stored as 10 because the screen floored

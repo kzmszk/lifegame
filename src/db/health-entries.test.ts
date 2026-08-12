@@ -314,6 +314,82 @@ describe('health entries on real D1', () => {
   });
 });
 
+describe('sleep entries', () => {
+  const sleep = (overrides: Partial<SyncedHealthRecord> = {}) =>
+    ({
+      kind: 'sleep',
+      external_id: 'hc-sleep-1',
+      occurred_on: '2026-08-11',
+      occurred_at: '2026-08-11T07:00:00+09:00',
+      weight_kg: null,
+      activity: null,
+      duration_minutes: 445,
+      ...overrides,
+    }) as SyncedHealthRecord;
+
+  it('stores a synced sleep session and reads it back', async () => {
+    expect(await upsertSyncedHealthEntries(env.DB, [sleep()])).toBe(1);
+
+    const page = await listHealthEntries(env.DB, { limit: 50, offset: 0 });
+    expect(page.entries).toEqual([
+      {
+        id: expect.any(Number),
+        kind: 'sleep',
+        occurred_on: '2026-08-11',
+        duration_minutes: 445,
+        note: '',
+        created_at: expect.any(String),
+        updated_at: expect.any(String),
+      },
+    ]);
+  });
+
+  // The table is the last line of defence: the shapes below never get past
+  // normalizeSyncPayload, so reaching a CHECK means a validation gap.
+  it('refuses a sleep row with no length or with exercise fields', async () => {
+    await expect(
+      upsertSyncedHealthEntries(env.DB, [sleep({ duration_minutes: null })]),
+    ).rejects.toBeInstanceOf(HealthEntryValidationError);
+    await expect(
+      upsertSyncedHealthEntries(env.DB, [
+        sleep({ external_id: 'hc-sleep-2', activity: 'ランニング' }),
+      ]),
+    ).rejects.toBeInstanceOf(HealthEntryValidationError);
+  });
+
+  it('cannot be entered or edited by hand, and says why', async () => {
+    await expect(
+      createHealthEntry(env.DB, {
+        kind: 'sleep',
+        occurred_on: '2026-08-11',
+        duration_minutes: 445,
+      } as never),
+    ).rejects.toThrow('同期');
+
+    await upsertSyncedHealthEntries(env.DB, [sleep()]);
+    const [stored] = (await listHealthEntries(env.DB, { limit: 1, offset: 0 }))
+      .entries;
+    await expect(
+      updateHealthEntry(env.DB, stored!.id, {
+        kind: 'sleep',
+        occurred_on: '2026-08-12',
+      } as never),
+    ).rejects.toThrow('同期');
+  });
+
+  // Deleting is allowed even though editing is not: a wrong night should be
+  // removable, and the row is the only copy lifegame has.
+  it('can be deleted', async () => {
+    await upsertSyncedHealthEntries(env.DB, [sleep()]);
+    const [stored] = (await listHealthEntries(env.DB, { limit: 1, offset: 0 }))
+      .entries;
+    expect(await deleteHealthEntry(env.DB, stored!.id)).toBe(true);
+    expect(
+      (await listHealthEntries(env.DB, { limit: 50, offset: 0 })).entries,
+    ).toEqual([]);
+  });
+});
+
 describe('upsertSyncedHealthEntries', () => {
   const record = (overrides: Partial<SyncedHealthRecord> = {}) =>
     ({

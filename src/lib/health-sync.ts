@@ -41,7 +41,7 @@ export class HealthSyncValidationError extends Error {
 }
 
 export interface SyncedHealthRecord {
-  kind: 'weight' | 'exercise';
+  kind: 'weight' | 'exercise' | 'sleep';
   external_id: string;
   occurred_on: string;
   occurred_at: string;
@@ -155,6 +155,20 @@ function parseDuration(value: unknown, index: number): number | null {
   return value;
 }
 
+function parseSleepDuration(value: unknown, index: number): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > 1440
+  ) {
+    invalid(
+      `${label(index)}.duration_minutes は 1 以上 1440 以下の整数で指定してください`,
+    );
+  }
+  return value;
+}
+
 function normalizeRecord(input: unknown, index: number): SyncedHealthRecord {
   if (!isRecord(input)) invalid(`${label(index)} は JSON オブジェクトです`);
   const external_id = parseExternalId(input.external_id, index);
@@ -191,10 +205,33 @@ function normalizeRecord(input: unknown, index: number): SyncedHealthRecord {
     };
   }
 
-  // Sleep is read on the device but health_entries has no shape for it, so it is
-  // refused by name instead of being dropped silently: a companion that thinks it
-  // synced sleep would keep its changes token and never retry.
-  invalid(`${label(index)}.kind は weight または exercise で指定してください`);
+  // A sleep session's `occurred_at` is the instant it ENDED, so the derived
+  // `occurred_on` is the morning it was slept into. The companion decides that
+  // by choosing which end of the session to send; the server cannot tell the two
+  // apart and does not try to. Sending the start instead would file a 23:30
+  // bedtime under the previous day and a 01:00 one under the next.
+  if (input.kind === 'sleep') {
+    if (hasOwn(input, 'weight_kg') || hasOwn(input, 'activity'))
+      invalid(
+        `${label(index)} の睡眠実績に体重測定や運動実績の項目は指定できません`,
+      );
+    return {
+      kind: 'sleep',
+      external_id,
+      occurred_on,
+      occurred_at,
+      weight_kg: null,
+      activity: null,
+      // Required, unlike an exercise session's. A night with no length is not a
+      // record of anything, and letting it through would put a row in the
+      // history that says only "slept".
+      duration_minutes: parseSleepDuration(input.duration_minutes, index),
+    };
+  }
+
+  // Refused by name rather than dropped silently: a companion that believes a
+  // record synced would advance its changes token and never send it again.
+  invalid(`${label(index)}.kind は weight、exercise、sleep で指定してください`);
 }
 
 /**

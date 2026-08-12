@@ -51,6 +51,38 @@ describe('POST /sync', () => {
     ]);
   });
 
+  // The whole point of sending the wake instant: this session started on 08-10
+  // at 23:30 JST and still lands on 08-11, the morning it was slept into.
+  it('stores a sleep session under the day it ended', async () => {
+    const response = await sync([
+      {
+        kind: 'sleep',
+        external_id: 'hc-sleep-1',
+        occurred_at: '2026-08-11T07:00:00+09:00',
+        duration_minutes: 450,
+      },
+    ]);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ accepted: 1 });
+    expect(await entries()).toMatchObject([
+      { kind: 'sleep', occurred_on: '2026-08-11', duration_minutes: 450 },
+    ]);
+  });
+
+  it('refuses a sleep session with no length', async () => {
+    const response = await sync([
+      {
+        kind: 'sleep',
+        external_id: 'hc-sleep-1',
+        occurred_at: '2026-08-11T07:00:00+09:00',
+      },
+    ]);
+
+    expect(response.status).toBe(400);
+    expect(await entries()).toEqual([]);
+  });
+
   // Acceptance criterion 1: the companion replays the same records on every
   // incremental pull, so a repeat must not add rows.
   it('is idempotent across identical payloads', async () => {

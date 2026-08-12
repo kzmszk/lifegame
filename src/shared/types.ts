@@ -160,7 +160,24 @@ export interface ExerciseSession {
   updated_at: string;
 }
 
-export type HealthEntry = WeightMeasurement | ExerciseSession;
+/**
+ * One sleep session, only ever produced by the companion's sync. `occurred_on`
+ * is the local date the session ended, so a night belongs to the morning it was
+ * slept into rather than splitting on whether bedtime fell before midnight.
+ * `duration_minutes` is required, unlike an exercise session's: a sleep record
+ * without a length carries nothing.
+ */
+export interface SleepRecord {
+  id: number;
+  kind: 'sleep';
+  occurred_on: string;
+  duration_minutes: number;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type HealthEntry = WeightMeasurement | ExerciseSession | SleepRecord;
 
 export interface WeightMeasurementInput {
   kind: 'weight';

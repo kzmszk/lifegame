@@ -22,6 +22,7 @@ data class HealthConnectReadResult(
 enum class HealthSyncType(val preferenceKey: String) {
     WEIGHT("weight_changes_token"),
     EXERCISE("exercise_changes_token"),
+    SLEEP("sleep_changes_token"),
 }
 
 class HealthSyncTokenStore(context: Context) {
@@ -124,6 +125,16 @@ class HealthConnectReader(
             }
         }
 
+        if (HealthPermissions.READ_SLEEP in granted) {
+            try {
+                val result = readSleepChanges(tokenStore.get(HealthSyncType.SLEEP))
+                records += result.records
+                nextTokens[HealthSyncType.SLEEP] = result.nextToken
+            } catch (_: SecurityException) {
+                // See the weight branch above.
+            }
+        }
+
         return HealthConnectSyncReadResult(records = records, nextTokens = nextTokens)
     }
 
@@ -192,6 +203,7 @@ class HealthConnectReader(
                     startZoneOffset = it.startZoneOffset,
                     endZoneOffset = it.endZoneOffset,
                     title = it.title,
+                    externalId = it.metadata.id,
                 )
             }
             HealthSummaryFormatter.sleep(samples)
@@ -245,6 +257,19 @@ class HealthConnectReader(
         return readChanges(initialToken, ExerciseSessionRecord::class) { record -> record.toSyncRecord() }
     }
 
+    private suspend fun readSleepChanges(storedToken: String?): TypeChanges {
+        val initialToken = storedToken ?: client.getChangesToken(
+            ChangesTokenRequest(recordTypes = setOf(SleepSessionRecord::class)),
+        )
+        if (storedToken == null) {
+            val records = readAll<SleepSessionRecord>(rangeForNow())
+                .map { it.toSyncRecord() }
+            return TypeChanges(records, initialToken)
+        }
+
+        return readChanges(initialToken, SleepSessionRecord::class) { record -> record.toSyncRecord() }
+    }
+
     private suspend fun <T : Record> readChanges(
         token: String,
         recordType: kotlin.reflect.KClass<T>,
@@ -259,6 +284,7 @@ class HealthConnectReader(
                 val fullRecords = when (recordType) {
                     WeightRecord::class -> readAll<WeightRecord>(rangeForNow()).map { map(it as T) }
                     ExerciseSessionRecord::class -> readAll<ExerciseSessionRecord>(rangeForNow()).map { map(it as T) }
+                    SleepSessionRecord::class -> readAll<SleepSessionRecord>(rangeForNow()).map { map(it as T) }
                     else -> emptyList()
                 }
                 return TypeChanges(fullRecords, replacementToken)
@@ -290,6 +316,16 @@ class HealthConnectReader(
         endedAt = endTime,
         startZoneOffset = startZoneOffset,
         title = title?.takeIf(String::isNotBlank) ?: exerciseTypeName(exerciseType),
+    )
+
+    // The end offset rather than the start one, because the end is the instant sent: a night
+    // that crosses a DST change has a different offset at each end, and the wrong one can move
+    // the derived local date.
+    private fun SleepSessionRecord.toSyncRecord() = HealthSyncRecord.Sleep(
+        externalId = metadata.id,
+        startedAt = startTime,
+        endedAt = endTime,
+        endZoneOffset = endZoneOffset,
     )
 
     private data class TypeChanges(

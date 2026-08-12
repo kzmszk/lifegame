@@ -29,8 +29,8 @@ class HealthDataTest {
         assertEquals(
             listOf(
                 "読み取るのは体重測定・運動実績・睡眠実績の3種類だけです。",
-                "体重測定と運動実績は、あなたが同期を押したときだけ lifegame（lifegame.tachicoma.com）へ送ります。",
-                "睡眠実績は端末の外へ送りません。自動での送信もしません。",
+                "この3種類を lifegame（lifegame.tachicoma.com）へ送ります。",
+                "送るのはあなたが同期を押したときだけです。自動での送信はしません。",
                 "第三者提供・広告・分析には使いません。",
             ),
             PrivacyPolicy.summary,
@@ -44,6 +44,18 @@ class HealthDataTest {
         assertEquals(
             emptyList<String>(),
             PrivacyPolicy.summary.filter { it.contains("読み取った内容を端末の外へ送信しません") },
+        )
+    }
+
+    // 睡眠は 2026-08 に送信対象へ変わった。「睡眠は送らない」と書いたまま送るのが、この ADR が
+    // 恐れている乖離そのものなので、その言い回しが戻ってこないことを機械で見張る。
+    @Test
+    fun `the summary no longer exempts sleep from what is sent`() {
+        assertEquals(
+            emptyList<String>(),
+            PrivacyPolicy.summary.filter {
+                it.contains("睡眠実績は端末の外へ送りません") || it.contains("睡眠実績は送信しません")
+            },
         )
     }
 
