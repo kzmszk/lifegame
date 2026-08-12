@@ -167,7 +167,7 @@ export interface ExerciseSession {
  * `duration_minutes` is required, unlike an exercise session's: a sleep record
  * without a length carries nothing.
  */
-export interface SleepRecord {
+export interface SleepSession {
   id: number;
   kind: 'sleep';
   occurred_on: string;
@@ -177,7 +177,7 @@ export interface SleepRecord {
   updated_at: string;
 }
 
-export type HealthEntry = WeightMeasurement | ExerciseSession | SleepRecord;
+export type HealthEntry = WeightMeasurement | ExerciseSession | SleepSession;
 
 export interface WeightMeasurementInput {
   kind: 'weight';

@@ -37,9 +37,19 @@ CREATE TABLE health_entries_rebuilt (
       AND (duration_minutes IS NULL
         OR duration_minutes BETWEEN 1 AND 1440))
     OR
+    -- Sleep is the one kind with no way in by hand: it exists only because the
+    -- companion synced it. That is a public contract of this change, and the
+    -- CHECK is where such a contract survives an implementation slip, so the
+    -- three columns a synced row always carries are required here rather than
+    -- left to the application layer. Without them the column defaults alone
+    -- produce a valid-looking manual sleep row that nothing in lifegame can
+    -- have created.
     (kind = 'sleep' AND weight_kg IS NULL AND activity IS NULL
       AND duration_minutes IS NOT NULL
-      AND duration_minutes BETWEEN 1 AND 1440)
+      AND duration_minutes BETWEEN 1 AND 1440
+      AND source = 'health_connect'
+      AND external_id IS NOT NULL
+      AND occurred_at IS NOT NULL)
   )
 );
 

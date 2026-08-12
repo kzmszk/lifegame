@@ -284,14 +284,22 @@ describe('OAuth consent CSRF protection', () => {
   // whose rows the companion's sync starts producing separately. A screen that
   // described the current inventory would understate the grant the moment a new
   // kind landed, and the permission would have been taken without it.
-  it('names every health kind health:read reaches, sleep included', async () => {
-    const html = await consentHtmlForScope(['health:read']);
+  // Both directions, not just the read. health:write is the scope that moves
+  // body measurements off the device, so a screen that understates it takes the
+  // more consequential permission under a smaller description. Sleep was added
+  // to the sync and to the read wording in separate changes, which is exactly
+  // how the write wording came to lag behind what the companion sends.
+  it.each(['health:read', 'health:write'] as const)(
+    'names every health kind %s reaches, sleep included',
+    async (scope) => {
+      const html = await consentHtmlForScope([scope]);
 
-    expect(html).toContain('<code>health:read</code>');
-    for (const kind of ['体重測定', '運動実績', '睡眠実績']) {
-      expect(html).toContain(kind);
-    }
-  });
+      expect(html).toContain(`<code>${scope}</code>`);
+      for (const kind of ['体重測定', '運動実績', '睡眠実績']) {
+        expect(html).toContain(kind);
+      }
+    },
+  );
 
   it('describes only the requested scopes, not the whole catalogue', async () => {
     const html = await consentHtmlForScope(['tasks:read']);

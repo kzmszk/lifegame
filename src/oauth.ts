@@ -20,12 +20,15 @@ const SCOPE_DESCRIPTIONS: Record<SupportedScope, string> = {
   'tasks:read': 'lifegameのタスクを読む',
   'tasks:write': 'lifegameのタスクを追加・変更・削除する',
   'calendar:read': 'Googleカレンダー（private）の予定と祝日を読む',
-  'health:write': '端末で読んだ体重測定・運動実績をlifegameへ同期する',
-  // Says what the scope reaches, not what happens to be stored today. The read
-  // is over health_entries as a whole and filters no kind out, so a kind added
-  // later is readable the moment it lands — and a consent screen that listed the
-  // current inventory would go quietly stale at exactly that moment. Sleep is
-  // named here for that reason, ahead of the sync that starts producing it.
+  // Both health scopes name every kind they reach rather than the inventory of
+  // the moment: a screen that listed what happens to be stored today goes
+  // quietly stale the instant a kind is added, and the permission has by then
+  // been taken without it. The write side is the direction that matters more —
+  // it is the one that moves body measurements off the device — so it is the one
+  // that must never understate. Adding a kind means editing these two strings in
+  // the same change that starts producing or accepting it.
+  'health:write':
+    '端末で読んだ健康記録（体重測定・運動実績・睡眠実績）をlifegameへ同期する',
   'health:read':
     'lifegameに記録された健康記録（体重測定・運動実績・睡眠実績）を読む',
 };

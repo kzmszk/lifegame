@@ -205,14 +205,14 @@ Worker に MCP サーバー(`/mcp`)を追加し、Claude アプリ・Claude Code
 
 ### MCP ツール (read/write 両対応)
 
-| ツール                | 種別  | 役割                                                                                                                                                                                   |
-| --------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_daily_summary`   | read  | 今日のタスク・期限切れ・Inbox 件数・今日完了分を1回の呼び出しで返す集約ビュー(ブリーフィング用)                                                                                        |
-| `list_tasks`          | read  | `view=today\|inbox\|all` 相当の一覧取得。`limit` (既定値100) と `offset` を指定でき、`truncated` と `next_offset` で続きの有無を示す                                                   |
-| `create_task`         | write | タスク追加。Claude が日本語を解釈し、構造化済み(`title, due_date, due_time, priority, tags`)で渡す                                                                                     |
-| `update_task`         | write | 更新(延期・タイトル変更・完了/未完了トグル)                                                                                                                                            |
-| `delete_task`         | write | 削除                                                                                                                                                                                   |
-| `list_health_entries` | read  | 体重測定・運動実績の一覧。`from` / `to` は `occurred_on` に対する両端を含む境界。`limit` (既定値50) と `offset`、`truncated` と `next_offset` はタスク一覧と同じ。`health:read` が要る |
+| ツール                | 種別  | 役割                                                                                                                                                                                                                                                           |
+| --------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_daily_summary`   | read  | 今日のタスク・期限切れ・Inbox 件数・今日完了分を1回の呼び出しで返す集約ビュー(ブリーフィング用)                                                                                                                                                                |
+| `list_tasks`          | read  | `view=today\|inbox\|all` 相当の一覧取得。`limit` (既定値100) と `offset` を指定でき、`truncated` と `next_offset` で続きの有無を示す                                                                                                                           |
+| `create_task`         | write | タスク追加。Claude が日本語を解釈し、構造化済み(`title, due_date, due_time, priority, tags`)で渡す                                                                                                                                                             |
+| `update_task`         | write | 更新(延期・タイトル変更・完了/未完了トグル)                                                                                                                                                                                                                    |
+| `delete_task`         | write | 削除                                                                                                                                                                                                                                                           |
+| `list_health_entries` | read  | 健康記録3種類（体重測定・運動実績・睡眠実績）の一覧。種類での絞り込みはできず、`kind` で判別する。`from` / `to` は `occurred_on` に対する両端を含む境界。`limit` (既定値50) と `offset`、`truncated` と `next_offset` はタスク一覧と同じ。`health:read` が要る |
 
 - JST の「今日」判定は Phase 1 と同様にサーバー側(`lib/time.ts`)で行い、Claude に日付境界を考えさせない
 - `completed_at` と `status` の連動契約(セクション7)は MCP 経由の更新にもそのまま適用する
@@ -553,25 +553,30 @@ WHERE の一致条件は**値が古くなることを防ぐためだけに残し
 
 ### 14.1 用語と最小スコープ
 
-ドメイン用語はルートの [CONTEXT.md](../CONTEXT.md) に定義する。初版で扱う健康記録は2種類だけ。
+ドメイン用語はルートの [CONTEXT.md](../CONTEXT.md) に定義する。扱う健康記録は3種類。
+初版は前の2つだけで、睡眠実績は 2026-08-12 に加えた。
 
 - **体重測定 (Weight Measurement)**: kg 単位の正の数。1日1件に制限せず、朝晩など複数の測定を残せる
 - **運動実績 (Exercise Session)**: 実施済みの運動。種目名は必須、時間(分)とメモは任意
+- **睡眠実績 (Sleep Record)**: 眠った長さ(分)。**必須**で、長さの無い一晩は記録として何も言わない。
+  前の2つと違い**手入力の経路が無く**、companion の同期でしか生まれない。種目名にあたるものは持たず、
+  睡眠段階の内訳も取り込まない
 - **記録対象日 (Occurrence Date)**: 利用者が指定する `YYYY-MM-DD` のローカル暦日。
-  `created_at` から推測しないので、日をまたいだ後でも前日分を正しく記録できる
+  `created_at` から推測しないので、日をまたいだ後でも前日分を正しく記録できる。
+  睡眠だけは利用者が指定せず、**セッションが終わった日**(起きた朝)を companion が送る値から導く
 
-どちらも予定や目標ではなく、既に測定・実施した事実である。同日の記録は集約・上書きせず、
+いずれも予定や目標ではなく、既に測定・実施した事実である。同日の記録は集約・上書きせず、
 それぞれ独立した履歴として保持する。
 
 ### 14.2 データモデルと不変条件
 
-用途の決まっていない `kind/value/unit` の汎用ログにはしない。2種類を判別可能な
+用途の決まっていない `kind/value/unit` の汎用ログにはしない。3種類を判別可能な
 `health_entries` にまとめ、種別ごとの値の組み合わせを DB の CHECK 制約でも守る。
 
 ```sql
 CREATE TABLE health_entries (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind             TEXT NOT NULL CHECK (kind IN ('weight', 'exercise')),
+  kind             TEXT NOT NULL CHECK (kind IN ('weight', 'exercise', 'sleep')),
   occurred_on      TEXT NOT NULL,              -- 'YYYY-MM-DD'
   weight_kg        REAL,
   activity         TEXT,
@@ -592,6 +597,16 @@ CREATE TABLE health_entries (
       AND length(trim(activity)) > 0
       AND (duration_minutes IS NULL
         OR duration_minutes BETWEEN 1 AND 1440))
+    OR
+    -- 睡眠は手入力の経路が無く、companion の同期でしか生まれない。
+    -- 同期の行が必ず持つ3列をここで要求しないと、列の既定値だけで
+    -- 「lifegame の誰も作れないはずの手入力の睡眠行」が成立してしまう。
+    (kind = 'sleep' AND weight_kg IS NULL AND activity IS NULL
+      AND duration_minutes IS NOT NULL
+      AND duration_minutes BETWEEN 1 AND 1440
+      AND source = 'health_connect'
+      AND external_id IS NOT NULL
+      AND occurred_at IS NOT NULL)
   )
 );
 CREATE INDEX idx_health_entries_occurred

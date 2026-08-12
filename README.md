@@ -175,6 +175,12 @@ companion は public client (`token_endpoint_auth_method: none`) + PKCE S256 で
     "activity": "ランニング",
     "duration_minutes": 32, // 省略可
   },
+  {
+    "kind": "sleep",
+    "external_id": "...",
+    "occurred_at": "2026-08-11T07:00:00+09:00", // 就寝ではなく起床の瞬間
+    "duration_minutes": 450, // 睡眠では必須
+  },
 ]
 ```
 

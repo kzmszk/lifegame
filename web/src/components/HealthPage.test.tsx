@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   ExerciseSession,
   HealthEntry,
-  SleepRecord,
+  SleepSession,
   WeightMeasurement,
 } from '../../../src/shared/types';
 import { groupHealthEntries, localDateInputValue } from '../health';
@@ -31,7 +31,7 @@ const exercise: ExerciseSession = {
   updated_at: '2026-08-06 00:00:00',
 };
 
-const sleep: SleepRecord = {
+const sleep: SleepSession = {
   id: 3,
   kind: 'sleep',
   occurred_on: '2026-08-11',

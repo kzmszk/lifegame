@@ -154,33 +154,85 @@ describe('migration 0008', () => {
 
   it('admits sleep only in the shape the sync sends', async () => {
     await applySchemaThrough0007();
-    const insertSleep = (durationMinutes: number | null) =>
-      env.DB.prepare(
-        `INSERT INTO health_entries (kind, occurred_on, duration_minutes)
-         VALUES ('sleep', '2026-08-11', ?)`,
+    // The shape upsertSyncedHealthEntries produces, with one column swappable.
+    const insertSynced = (overrides: Record<string, unknown> = {}) => {
+      const row = {
+        duration_minutes: 445,
+        source: 'health_connect',
+        external_id: 'hc-sleep-1',
+        occurred_at: '2026-08-11T07:00:00+09:00',
+        weight_kg: null,
+        activity: null,
+        ...overrides,
+      };
+      return env.DB.prepare(
+        `INSERT INTO health_entries
+           (kind, occurred_on, duration_minutes, source, external_id,
+            occurred_at, weight_kg, activity)
+         VALUES ('sleep', '2026-08-11', ?, ?, ?, ?, ?, ?)`,
       )
-        .bind(durationMinutes)
+        .bind(
+          row.duration_minutes,
+          row.source,
+          row.external_id,
+          row.occurred_at,
+          row.weight_kg,
+          row.activity,
+        )
         .run();
+    };
 
-    await expect(insertSleep(445)).rejects.toThrow();
+    await expect(insertSynced()).rejects.toThrow();
 
     await apply0008();
 
-    await insertSleep(445);
-    // A night with no length, or one carrying another kind's columns, is what
-    // the widened CHECK still has to refuse.
-    await expect(insertSleep(null)).rejects.toThrow();
+    await insertSynced();
+
+    // A night with no length says only "slept", and one carrying another kind's
+    // columns is not a night at all.
     await expect(
-      env.DB.prepare(
-        `INSERT INTO health_entries (kind, occurred_on, duration_minutes, activity)
-         VALUES ('sleep', '2026-08-11', 445, 'ランニング')`,
-      ).run(),
+      insertSynced({ external_id: 'hc-sleep-2', duration_minutes: null }),
     ).rejects.toThrow();
     await expect(
+      insertSynced({ external_id: 'hc-sleep-3', duration_minutes: 1441 }),
+    ).rejects.toThrow();
+    await expect(
+      insertSynced({ external_id: 'hc-sleep-4', activity: 'ランニング' }),
+    ).rejects.toThrow();
+    await expect(
+      insertSynced({ external_id: 'hc-sleep-5', weight_kg: 68.4 }),
+    ).rejects.toThrow();
+  });
+
+  // Sleep has no manual entry path, so a manual-shaped sleep row is a row
+  // nothing in lifegame can have produced. Leaving it to the application layer
+  // would mean the column defaults alone are enough to create one.
+  it('refuses a sleep row that did not come from the sync', async () => {
+    await applySchemaThrough0007();
+    await apply0008();
+
+    // Column defaults: source 'manual', external_id and occurred_at NULL.
+    await expect(
       env.DB.prepare(
-        `INSERT INTO health_entries (kind, occurred_on, duration_minutes, weight_kg)
-         VALUES ('sleep', '2026-08-11', 445, 68.4)`,
+        `INSERT INTO health_entries (kind, occurred_on, duration_minutes)
+         VALUES ('sleep', '2026-08-11', 445)`,
       ).run(),
     ).rejects.toThrow();
+
+    const missing = (column: string, value: unknown) =>
+      env.DB.prepare(
+        `INSERT INTO health_entries
+           (kind, occurred_on, duration_minutes, source, external_id, occurred_at)
+         VALUES ('sleep', '2026-08-11', 445,
+           ${column === 'source' ? '?' : "'health_connect'"},
+           ${column === 'external_id' ? '?' : "'hc-sleep-1'"},
+           ${column === 'occurred_at' ? '?' : "'2026-08-11T07:00:00+09:00'"})`,
+      )
+        .bind(value)
+        .run();
+
+    await expect(missing('source', 'manual')).rejects.toThrow();
+    await expect(missing('external_id', null)).rejects.toThrow();
+    await expect(missing('occurred_at', null)).rejects.toThrow();
   });
 });
