@@ -92,28 +92,32 @@ describe('OAuth authorization policy', () => {
     ]);
   });
 
-  // health:write exists for the companion's POST /sync and nothing else. Reading
-  // health entries still has no scope, so a token cannot be turned into a way to
-  // read the data back out. A client that wants to write has to name the scope,
-  // which is what keeps it out of the omitted-scope default above.
-  it('advertises health:write but only grants it when asked for', () => {
-    expect([...SUPPORTED_SCOPES]).toContain('health:write');
-    expect([...SUPPORTED_SCOPES]).not.toContain('health:read');
-    expect(
-      validateAuthorizationRequest(
-        authorizationRequest({ scope: ['health:write'] }),
-        client(),
-      ),
-    ).toBeNull();
-    expect(grantedScopesForRequest(['health:write'])).toEqual(['health:write']);
-    expect(grantedScopesForRequest([])).not.toContain('health:write');
-    expect(
-      validateAuthorizationRequest(
-        authorizationRequest({ scope: ['health:read'] }),
-        client(),
-      )?.error,
-    ).toBe('invalid_scope');
-    expect(grantedScopesForRequest([])).not.toContain('health:read');
+  // health:write exists for the companion's POST /sync, health:read for the MCP
+  // tool that reads entries back out. They are separate because the companion
+  // writes without ever reading and the MCP client reads without ever writing:
+  // holding one must not imply the other. Neither is in the omitted-scope
+  // default above, so a client has to name the one it wants — which is what
+  // keeps an already-written client from silently gaining health access the next
+  // time it reauthorizes.
+  it('advertises both health scopes but only grants them when asked for', () => {
+    for (const scope of ['health:write', 'health:read'] as const) {
+      expect([...SUPPORTED_SCOPES]).toContain(scope);
+      expect(
+        validateAuthorizationRequest(
+          authorizationRequest({ scope: [scope] }),
+          client(),
+        ),
+      ).toBeNull();
+      expect(grantedScopesForRequest([scope])).toEqual([scope]);
+      expect(grantedScopesForRequest([])).not.toContain(scope);
+    }
+    // Naming one must not drag the other in.
+    expect(grantedScopesForRequest(['health:read'])).not.toContain(
+      'health:write',
+    );
+    expect(grantedScopesForRequest(['health:write'])).not.toContain(
+      'health:read',
+    );
   });
 
   it('does not advertise or accept saved-link scopes', () => {
@@ -273,6 +277,20 @@ describe('OAuth consent CSRF protection', () => {
       expect(html).toContain(`<code>${scope}</code>`);
     }
     expect(html).toContain('Googleカレンダー');
+  });
+
+  // The read is over health_entries as a whole and filters no kind out, so the
+  // consent screen has to name every kind the grant reaches — including sleep,
+  // whose rows the companion's sync starts producing separately. A screen that
+  // described the current inventory would understate the grant the moment a new
+  // kind landed, and the permission would have been taken without it.
+  it('names every health kind health:read reaches, sleep included', async () => {
+    const html = await consentHtmlForScope(['health:read']);
+
+    expect(html).toContain('<code>health:read</code>');
+    for (const kind of ['体重測定', '運動実績', '睡眠実績']) {
+      expect(html).toContain(kind);
+    }
   });
 
   it('describes only the requested scopes, not the whole catalogue', async () => {

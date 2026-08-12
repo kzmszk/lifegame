@@ -8,6 +8,11 @@ import {
   type TaskListOptions,
   type TaskView,
 } from '../db/tasks';
+import {
+  HealthEntryValidationError,
+  listHealthEntries,
+  type HealthEntryListOptions,
+} from '../db/health-entries';
 import { tokyoDayBounds } from '../lib/time';
 import { fieldsFromBody, validateFields } from '../lib/task-validation';
 import {
@@ -21,6 +26,7 @@ import {
   DEFAULT_TASK_LIST_LIMIT,
   MAX_TASK_LIST_LIMIT,
   type CalendarEvent,
+  type HealthEntryListPage,
   type Task,
   type TaskListPage,
 } from '../shared/types';
@@ -165,6 +171,26 @@ export async function getDailySummary(
         }
       : {}),
   };
+}
+
+/**
+ * Reads health entries back out. Unlike the task tools this one revalidates
+ * nothing of its own: `listHealthEntries` already rejects a malformed date range
+ * or page size, so the only work here is turning that refusal into the error
+ * type the MCP layer reports. Duplicating the range checks would give the same
+ * mistake two different messages depending on which one fired first.
+ */
+export async function listHealthEntriesForMcp(
+  db: D1Database,
+  options: HealthEntryListOptions = {},
+): Promise<HealthEntryListPage> {
+  try {
+    return await listHealthEntries(db, options);
+  } catch (thrown) {
+    if (thrown instanceof HealthEntryValidationError)
+      throw new McpToolError(thrown.message);
+    throw thrown;
+  }
 }
 
 export async function listTasksForMcp(

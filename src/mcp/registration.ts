@@ -1,6 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { DEFAULT_TASK_LIST_LIMIT, MAX_TASK_LIST_LIMIT } from '../shared/types';
+import {
+  DEFAULT_HEALTH_ENTRY_LIST_LIMIT,
+  MAX_HEALTH_ENTRY_LIST_LIMIT,
+} from '../db/health-entries';
 import type { McpAuthProps, McpScope } from './auth';
 import type { Env } from '../env';
 import { assertGrantActive, assertMcpScope, hasMcpScope } from './auth';
@@ -8,6 +12,7 @@ import {
   createTaskForMcp,
   deleteTaskForMcp,
   getDailySummary,
+  listHealthEntriesForMcp,
   listTasksForMcp,
   McpToolError,
   updateTaskForMcp,
@@ -165,6 +170,59 @@ export function registerLifegameTools(
         await authorize('tasks:read');
         return jsonToolResult(
           await listTasksForMcp(db, view, new Date(), { limit, offset }),
+        );
+      } catch (error) {
+        return errorToolResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_health_entries',
+    {
+      description: `記録済みの健康記録（体重測定・運動実績・睡眠実績）を新しい順に返します。kindでどの種類かが分かります。種類での絞り込みはできません。fromとtoはoccurred_on（記録が属するローカル日付）に対する境界で、どちらも含みます。1回の呼び出しは最大${MAX_HEALTH_ENTRY_LIST_LIMIT}件で、続きがある場合はtruncated=trueとnext_offsetを返します。返るのは日付単位の粒度で、測定時刻や記録元（手入力か端末からの同期か）は含みません。記録が無い日は行として現れません。運動の記録が無い日は「運動しなかった日」ではなく「記録が残らなかった日」なので、そのつもりで扱ってください。`,
+      inputSchema: {
+        from: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 形式で指定してください')
+          .optional()
+          .describe('この日以降の記録に絞る。YYYY-MM-DD'),
+        to: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 形式で指定してください')
+          .optional()
+          .describe('この日以前の記録に絞る。YYYY-MM-DD'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_HEALTH_ENTRY_LIST_LIMIT)
+          .default(DEFAULT_HEALTH_ENTRY_LIST_LIMIT)
+          .describe(
+            `1回に取得する件数（1〜${MAX_HEALTH_ENTRY_LIST_LIMIT}。既定値は${DEFAULT_HEALTH_ENTRY_LIST_LIMIT}）`,
+          ),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .default(0)
+          .describe('取得開始位置。続きはレスポンスのnext_offsetを指定'),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    },
+    async ({ from, to, limit, offset }) => {
+      try {
+        await authorize('health:read');
+        return jsonToolResult(
+          await listHealthEntriesForMcp(db, {
+            // Spread rather than pass through: the options type distinguishes an
+            // absent bound from an explicit undefined, and only the absent one
+            // means "no bound" to the query builder.
+            ...(from === undefined ? {} : { from }),
+            ...(to === undefined ? {} : { to }),
+            limit,
+            offset,
+          }),
         );
       } catch (error) {
         return errorToolResult(error);

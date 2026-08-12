@@ -193,7 +193,8 @@ companion は public client (`token_endpoint_auth_method: none`) + PKCE S256 で
 - `occurred_at` のオフセット `-00:00` は RFC 3339 で「不明」を意味するため拒否する。ローカル日付を
   導出できないので。UTC なら `Z` か `+00:00` を送る
 - 削除は同期しない。Health Connect の削除 change は record type を含まないため。lifegame 側で消す
-- 書き込み専用。健康記録を読み返すスコープは無い
+- この口は書き込み専用で、`health:write` では読み返せない。読み出しは別スコープ `health:read` と
+  MCP の `list_health_entries` に分けてある。companion は書くだけで読まない
 
 ### 承認画面のCSPを変更するときの注意
 
@@ -232,6 +233,16 @@ codex mcp login lifegame
 ```
 
 接続後は、`get_daily_summary`、`list_tasks`、`create_task`、`update_task`、`delete_task` が使える。
+
+健康記録を読む `list_health_entries` は `health:read` スコープが要る。既定のスコープには
+入っていないので、**`--scopes` を省略した `codex mcp login` では付かない**（省略は空の要求として
+既定セットに置き換わる）。要求するスコープを全部並べて login し直す。既に付いているものも
+書かないと落ちる。
+
+```sh
+codex mcp login lifegame --scopes tasks:read,tasks:write,calendar:read,health:read
+```
+
 朝の定型文は [skills/morning-briefing/](skills/morning-briefing/) にある。クライアントごとの導入手順は
 [INSTALL.md](skills/morning-briefing/INSTALL.md) を参照。claude.ai 用のZIPは次で作れる。
 
