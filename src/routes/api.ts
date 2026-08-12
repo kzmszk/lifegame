@@ -19,6 +19,7 @@ import {
   MAX_HEALTH_ENTRY_LIST_LIMIT,
   updateHealthEntry,
   type HealthEntryCreateInput,
+  type HealthEntryKind,
   type HealthEntryUpdateInput,
 } from '../db/health-entries';
 import {
@@ -277,11 +278,16 @@ api.get('/health-entries', async (c) => {
     return error(c, 'offset は 0 以上の整数で指定してください', 400);
 
   try {
+    const kind = c.req.query('kind');
     const page = await listHealthEntries(c.env.DB, {
       ...(c.req.query('from') === undefined
         ? {}
         : { from: c.req.query('from') }),
       ...(c.req.query('to') === undefined ? {} : { to: c.req.query('to') }),
+      // Passed through unvalidated on purpose: listHealthEntries owns the
+      // vocabulary, so checking it here would give the same mistake two
+      // different messages depending on which layer noticed first.
+      ...(kind === undefined ? {} : { kind: kind as HealthEntryKind }),
       limit,
       offset,
     });

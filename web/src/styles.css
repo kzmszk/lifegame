@@ -279,6 +279,28 @@ button {
   box-shadow: 0 10px 30px rgba(77, 64, 43, 0.04);
 }
 .health-form-heading,
+.health-kind-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.health-kind-chip {
+  padding: 7px 15px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+.health-kind-chip.is-selected {
+  border-color: var(--green);
+  background: var(--green);
+  color: var(--paper);
+}
 .health-history-heading {
   display: flex;
   align-items: baseline;

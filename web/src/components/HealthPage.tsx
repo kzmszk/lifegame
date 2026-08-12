@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import type {
   HealthEntry,
+  HealthEntryKind,
   HealthEntryUpdateInput,
 } from '../../../src/shared/types';
 import {
@@ -13,7 +14,12 @@ import {
 import { groupHealthEntries, localDateInputValue } from '../health';
 import { ErrorState, Loading } from './feedback';
 
-export type HealthEntryKind = 'weight' | 'exercise';
+/**
+ * What a form can create, which is narrower than what a record can be: sleep
+ * only ever arrives from the companion's sync, so there is no form for it and
+ * no way to name it here.
+ */
+export type HealthEntryFormKind = 'weight' | 'exercise';
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -26,7 +32,7 @@ function numberValue(value: string): number | null {
 }
 
 interface HealthEntryFormProps {
-  kind: HealthEntryKind;
+  kind: HealthEntryFormKind;
   onSaved: (entry: HealthEntry) => Promise<void>;
   onError?: (message: string) => void;
 }
@@ -375,6 +381,46 @@ export function HealthHistory({
   );
 }
 
+export type HealthEntryKindFilter = HealthEntryKind | 'all';
+
+const KIND_FILTER_OPTIONS: ReadonlyArray<{
+  value: HealthEntryKindFilter;
+  label: string;
+}> = [
+  { value: 'all', label: 'すべて' },
+  { value: 'weight', label: '体重' },
+  { value: 'exercise', label: '運動' },
+  { value: 'sleep', label: '睡眠' },
+];
+
+export function HealthKindFilter({
+  value,
+  onChange,
+}: {
+  value: HealthEntryKindFilter;
+  onChange: (value: HealthEntryKindFilter) => void;
+}) {
+  return (
+    <div
+      className="health-kind-filter"
+      role="group"
+      aria-label="健康記録の種類で絞り込む"
+    >
+      {KIND_FILTER_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className={`health-kind-chip${value === option.value ? ' is-selected' : ''}`}
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function entryKindLabel(entry: HealthEntry): string {
   if (entry.kind === 'weight') return '体重測定';
   if (entry.kind === 'exercise') return '運動実績';
@@ -559,32 +605,43 @@ export function HealthPage({
   const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const [kindFilter, setKindFilter] = useState<HealthEntryKindFilter>('all');
 
-  const loadEntries = useCallback(async (offset = 0) => {
-    const appending = offset > 0;
-    if (appending) {
-      setLoadingMore(true);
-      setLoadMoreError(null);
-    } else {
-      setLoading(true);
-      setLoadError(null);
-    }
-    try {
-      const response = await fetchHealthEntries({ offset });
-      setEntries((current) =>
-        appending ? [...current, ...response.entries] : response.entries,
-      );
-      setTruncated(response.truncated);
-      setNextOffset(response.next_offset);
-    } catch (caught) {
-      const message = errorMessage(caught, '健康記録の取得に失敗しました');
-      if (appending) setLoadMoreError(message);
-      else setLoadError(message);
-    } finally {
-      if (appending) setLoadingMore(false);
-      else setLoading(false);
-    }
-  }, []);
+  // The filter goes to the server rather than to the loaded array. The page is
+  // cut before it arrives, so filtering here would show only the matches inside
+  // the first page and present that as the whole history — which is how a night
+  // that is stored can look like a night that was never recorded.
+  const loadEntries = useCallback(
+    async (offset = 0) => {
+      const appending = offset > 0;
+      if (appending) {
+        setLoadingMore(true);
+        setLoadMoreError(null);
+      } else {
+        setLoading(true);
+        setLoadError(null);
+      }
+      try {
+        const response = await fetchHealthEntries({
+          offset,
+          ...(kindFilter === 'all' ? {} : { kind: kindFilter }),
+        });
+        setEntries((current) =>
+          appending ? [...current, ...response.entries] : response.entries,
+        );
+        setTruncated(response.truncated);
+        setNextOffset(response.next_offset);
+      } catch (caught) {
+        const message = errorMessage(caught, '健康記録の取得に失敗しました');
+        if (appending) setLoadMoreError(message);
+        else setLoadError(message);
+      } finally {
+        if (appending) setLoadingMore(false);
+        else setLoading(false);
+      }
+    },
+    [kindFilter],
+  );
 
   useEffect(() => {
     void loadEntries();
@@ -606,6 +663,11 @@ export function HealthPage({
         <HealthEntryForm kind="weight" onSaved={refresh} onError={onError} />
         <HealthEntryForm kind="exercise" onSaved={refresh} onError={onError} />
       </div>
+      {/* Outside the loading branch on purpose: a filter that disappears while
+          its own results are loading cannot be corrected mid-flight, and the
+          list jumping between three states and none is worse than a stale
+          heading. */}
+      <HealthKindFilter value={kindFilter} onChange={setKindFilter} />
       {loading ? (
         <Loading />
       ) : loadError ? (
