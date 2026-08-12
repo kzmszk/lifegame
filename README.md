@@ -230,6 +230,8 @@ codex mcp login lifegame
 ```
 
 接続後は、`get_daily_summary`、`list_tasks`、`create_task`、`update_task`、`delete_task` が使える。
+健康記録を読む `list_health_entries` もあるが、これは `health:read` スコープを名指しで要求した
+接続でしか使えない。既定のスコープには入っていないので、既に接続済みのクライアントは再接続が要る。
 朝の定型文は [skills/morning-briefing/](skills/morning-briefing/) にある。クライアントごとの導入手順は
 [INSTALL.md](skills/morning-briefing/INSTALL.md) を参照。claude.ai 用のZIPは次で作れる。
 

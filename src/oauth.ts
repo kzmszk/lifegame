@@ -21,6 +21,7 @@ const SCOPE_DESCRIPTIONS: Record<SupportedScope, string> = {
   'tasks:write': 'lifegameのタスクを追加・変更・削除する',
   'calendar:read': 'Googleカレンダー（private）の予定と祝日を読む',
   'health:write': '端末で読んだ体重測定・運動実績をlifegameへ同期する',
+  'health:read': 'lifegameに記録された体重測定・運動実績を読む',
 };
 
 const CONSENT_CSRF_COOKIE_PREFIX = '__Host-lifegame-consent-';

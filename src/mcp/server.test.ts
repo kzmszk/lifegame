@@ -26,7 +26,7 @@ function liveDb() {
 }
 
 describe('MCP tool registration', () => {
-  it('keeps health data and saved links out of the published tool names and schemas', () => {
+  it('keeps saved links out of the published tools, and health data out of the task ones', () => {
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     registerLifegameTools(server, envFor(liveDb()), () => ({
       email: 'owner@example.com',
@@ -49,13 +49,22 @@ describe('MCP tool registration', () => {
       'create_task',
       'delete_task',
       'get_daily_summary',
+      'list_health_entries',
       'list_tasks',
       'update_task',
     ]);
 
-    for (const tool of Object.values(registeredTools)) {
+    // Saved links have no tool at all, so no description may advertise one.
+    // Health entries now have exactly one, which is why the health vocabulary is
+    // checked per tool below rather than banned outright: a task tool that grew
+    // a weight field would otherwise hide behind list_health_entries' allowance.
+    for (const [name, tool] of Object.entries(registeredTools)) {
       expect(tool.description ?? '').not.toMatch(
-        /健康|体重|運動|保存リンク|読むリスト|weight_kg|occurred_on|saved[_-]links?/i,
+        /保存リンク|読むリスト|saved[_-]links?/i,
+      );
+      if (name === 'list_health_entries') continue;
+      expect(tool.description ?? '').not.toMatch(
+        /健康|体重|運動|weight_kg|occurred_on/i,
       );
     }
 
@@ -116,6 +125,10 @@ describe('MCP tool registration', () => {
       readOnlyHint: false,
       destructiveHint: true,
     });
+    expect(registeredTools.list_health_entries.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
     expect(
       (registeredTools.create_task.inputSchema as z.ZodType).safeParse({
         title: '',
@@ -129,6 +142,101 @@ describe('MCP tool registration', () => {
     expect(
       (result as { content: Array<{ text: string }> }).content[0].text,
     ).toContain('tasks:write');
+  });
+
+  // health:read is its own scope precisely so a task grant cannot read the body
+  // measurements back out, and so the companion's write grant cannot either.
+  it('gates list_health_entries on health:read alone', async () => {
+    const storedRow = {
+      id: 3,
+      kind: 'exercise',
+      occurred_on: '2026-08-10',
+      weight_kg: null,
+      activity: 'ランニング',
+      duration_minutes: 12,
+      note: '',
+      created_at: '2026-08-10 00:00:00',
+      updated_at: '2026-08-10 00:00:00',
+    };
+    const db = {
+      prepare: () => ({
+        bind: () => ({
+          // The revocation lookup shares this fake; null means the grant is live.
+          first: async () => null,
+          all: async () => ({ results: [storedRow] }),
+        }),
+      }),
+    } as unknown as D1Database;
+
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    let scopes = ['tasks:read', 'tasks:write', 'health:write'];
+    registerLifegameTools(server, envFor(db), () => ({
+      email: 'owner@example.com',
+      scopes,
+    }));
+    const tool = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          { handler: (input: unknown) => Promise<unknown> }
+        >;
+      }
+    )._registeredTools.list_health_entries;
+
+    const refused = (await tool.handler({ limit: 50, offset: 0 })) as {
+      isError?: true;
+      content: Array<{ text: string }>;
+    };
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toContain('health:read');
+
+    scopes = ['health:read'];
+    const allowed = (await tool.handler({ limit: 50, offset: 0 })) as {
+      isError?: true;
+      content: Array<{ text: string }>;
+    };
+    expect(allowed.isError).toBeUndefined();
+    expect(JSON.parse(allowed.content[0].text)).toEqual({
+      entries: [
+        {
+          id: 3,
+          kind: 'exercise',
+          occurred_on: '2026-08-10',
+          activity: 'ランニング',
+          duration_minutes: 12,
+          note: '',
+          created_at: '2026-08-10 00:00:00',
+          updated_at: '2026-08-10 00:00:00',
+        },
+      ],
+      truncated: false,
+      next_offset: null,
+    });
+  });
+
+  it('reports a bad date range from list_health_entries as a tool error', async () => {
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    registerLifegameTools(server, envFor(liveDb()), () => ({
+      email: 'owner@example.com',
+      scopes: ['health:read'],
+    }));
+    const tool = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          { handler: (input: unknown) => Promise<unknown> }
+        >;
+      }
+    )._registeredTools.list_health_entries;
+
+    const result = (await tool.handler({
+      from: '2026-08-10',
+      to: '2026-08-01',
+      limit: 50,
+      offset: 0,
+    })) as { isError?: true; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('from は to 以前');
   });
 
   it('returns only update metadata without tasks:read and the full task with both scopes', async () => {
