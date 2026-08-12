@@ -286,6 +286,54 @@ describe('MCP tool registration', () => {
     expect(page.next_offset).toBe(6);
   });
 
+  it('passes the kind filter through to the query', async () => {
+    const bound: unknown[][] = [];
+    let statement = '';
+    const db = {
+      prepare: (sql: string) => {
+        statement = sql;
+        return {
+          bind: (...args: unknown[]) => {
+            bound.push(args);
+            return {
+              first: async () => null,
+              all: async () => ({ results: [] }),
+            };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    registerLifegameTools(server, envFor(db), () => ({
+      email: 'owner@example.com',
+      scopes: ['health:read'],
+    }));
+    const tool = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          {
+            handler: (input: unknown) => Promise<unknown>;
+            inputSchema?: z.ZodType;
+          }
+        >;
+      }
+    )._registeredTools.list_health_entries;
+
+    await tool.handler({ kind: 'sleep', limit: 50, offset: 0 });
+
+    expect(statement).toContain('kind = ?');
+    expect(bound.at(-1)).toEqual(['sleep', 51, 0]);
+
+    // The schema is the first line of defence, so an unknown kind never becomes
+    // a query at all.
+    expect(
+      tool.inputSchema!.safeParse({ kind: 'blood_pressure' }).success,
+    ).toBe(false);
+    expect(tool.inputSchema!.safeParse({ kind: 'sleep' }).success).toBe(true);
+  });
+
   // An omitted bound must reach the query as no bound at all, not as a filter on
   // undefined. The two read the same at the call site and do not at the WHERE.
   it('omits the date filters entirely when neither bound is given', async () => {

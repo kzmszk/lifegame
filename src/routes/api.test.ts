@@ -1067,10 +1067,37 @@ describe('health entry API', () => {
     expect(deletedAgain.status).toBe(404);
   });
 
+  it('filters the list by kind', async () => {
+    await createHealthEntry({
+      kind: 'weight',
+      occurred_on: '2026-08-07',
+      weight_kg: 68.4,
+    });
+    await createHealthEntry({
+      kind: 'exercise',
+      occurred_on: '2026-08-07',
+      activity: '散歩',
+    });
+
+    const weightOnly = await requestHealth('/api/health-entries?kind=weight');
+    expect(weightOnly.status).toBe(200);
+    const filtered = (await weightOnly.json()) as { entries: unknown[] };
+    expect(filtered.entries).toMatchObject([
+      { kind: 'weight', weight_kg: 68.4 },
+    ]);
+
+    const unfiltered = (await (
+      await requestHealth('/api/health-entries')
+    ).json()) as { entries: unknown[] };
+    expect(unfiltered.entries).toHaveLength(2);
+  });
+
   it('rejects invalid dates, ranges, pagination, numbers, and kind fields', async () => {
     const invalidRequests: Array<Promise<Response>> = [
       requestHealth('/api/health-entries?from=2026-02-30'),
       requestHealth('/api/health-entries?from=2026-08-08&to=2026-08-07'),
+      requestHealth('/api/health-entries?kind=blood_pressure'),
+      requestHealth('/api/health-entries?kind='),
       requestHealth('/api/health-entries?limit=0'),
       requestHealth('/api/health-entries?limit=101'),
       requestHealth('/api/health-entries?offset=-1'),

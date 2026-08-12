@@ -179,6 +179,15 @@ export interface SleepSession {
 
 export type HealthEntry = WeightMeasurement | ExerciseSession | SleepSession;
 
+/** The discriminator, named so callers can talk about a kind without a value. */
+export type HealthEntryKind = HealthEntry['kind'];
+
+export const HEALTH_ENTRY_KINDS = [
+  'weight',
+  'exercise',
+  'sleep',
+] as const satisfies readonly HealthEntryKind[];
+
 export interface WeightMeasurementInput {
   kind: 'weight';
   occurred_on: string;

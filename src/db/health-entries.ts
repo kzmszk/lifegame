@@ -1,9 +1,11 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { validDate } from '../lib/task-validation';
 import type { SyncedHealthRecord } from '../lib/health-sync';
+import { HEALTH_ENTRY_KINDS } from '../shared/types';
 import type {
   HealthEntry,
   HealthEntryInput,
+  HealthEntryKind,
   HealthEntryListPage,
   HealthEntryUpdateInput,
 } from '../shared/types';
@@ -14,6 +16,7 @@ export type {
   HealthEntry,
   HealthEntryCreateInput,
   HealthEntryInput,
+  HealthEntryKind,
   HealthEntryListPage,
   HealthEntryUpdateInput,
   WeightMeasurement,
@@ -42,6 +45,11 @@ export class HealthEntryConstraintError extends HealthEntryValidationError {
 export interface HealthEntryListOptions {
   from?: string;
   to?: string;
+  /** Absent means every kind. Filtering belongs here rather than in the caller
+   * because the page is cut before it is returned: a caller that filtered the
+   * page it received would show only the matches that happened to fall inside
+   * the first `limit` rows and call that the whole answer. */
+  kind?: HealthEntryKind;
   limit?: number;
   offset?: number;
 }
@@ -298,15 +306,22 @@ async function getHealthEntry(
 function validateListOptions(options: HealthEntryListOptions): {
   from?: string;
   to?: string;
+  kind?: HealthEntryKind;
   limit: number;
   offset: number;
 } {
   const from = options.from;
   const to = options.to;
+  const kind = options.kind;
   if (from !== undefined) assertOccurrenceDate(from);
   if (to !== undefined) assertOccurrenceDate(to);
   if (from !== undefined && to !== undefined && from > to)
     invalid('from は to 以前の日付で指定してください');
+  if (
+    kind !== undefined &&
+    !(HEALTH_ENTRY_KINDS as readonly string[]).includes(kind)
+  )
+    invalid(`kind は ${HEALTH_ENTRY_KINDS.join('、')} のいずれかです`);
 
   const limit =
     options.limit === undefined
@@ -323,14 +338,14 @@ function validateListOptions(options: HealthEntryListOptions): {
   const offset = options.offset === undefined ? 0 : options.offset;
   if (!Number.isSafeInteger(offset) || offset < 0)
     invalid('offset は 0 以上の整数で指定してください');
-  return { from, to, limit, offset };
+  return { from, to, kind, limit, offset };
 }
 
 export async function listHealthEntries(
   db: D1Database,
   options: HealthEntryListOptions = {},
 ): Promise<HealthEntryListPage> {
-  const { from, to, limit, offset } = validateListOptions(options);
+  const { from, to, kind, limit, offset } = validateListOptions(options);
   const conditions: string[] = [];
   const bindings: Array<string | number> = [];
   if (from !== undefined) {
@@ -340,6 +355,10 @@ export async function listHealthEntries(
   if (to !== undefined) {
     conditions.push('occurred_on <= ?');
     bindings.push(to);
+  }
+  if (kind !== undefined) {
+    conditions.push('kind = ?');
+    bindings.push(kind);
   }
   const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
   const result = await db

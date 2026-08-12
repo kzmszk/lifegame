@@ -8,7 +8,7 @@ import type {
 } from '../../../src/shared/types';
 import { groupHealthEntries, localDateInputValue } from '../health';
 import { BottomTabs } from './BottomTabs';
-import { HealthEntryForm, HealthHistory } from './HealthPage';
+import { HealthEntryForm, HealthHistory, HealthKindFilter } from './HealthPage';
 
 const weight: WeightMeasurement = {
   id: 2,
@@ -100,6 +100,21 @@ describe('health entry components', () => {
     expect(html).toContain('修正');
     expect(html).toContain('削除');
     expect(html).toContain('さらに読み込む');
+  });
+
+  it('offers a chip per kind and marks the selected one', () => {
+    const html = renderToStaticMarkup(
+      <HealthKindFilter value="sleep" onChange={() => undefined} />,
+    );
+
+    for (const label of ['すべて', '体重', '運動', '睡眠']) {
+      expect(html).toContain(`>${label}</button>`);
+    }
+    // aria-pressed carries the selection for a screen reader; the class only
+    // carries it for a sighted one.
+    expect(html).toMatch(/aria-pressed="true"[^>]*>睡眠</);
+    expect(html).toMatch(/class="[^"]*is-selected[^"]*"[^>]*>睡眠</);
+    expect(html).toMatch(/aria-pressed="false"[^>]*>すべて</);
   });
 
   // Sleep arrives only from the companion's sync and has no form to edit it back

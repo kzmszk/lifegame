@@ -1,6 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { DEFAULT_TASK_LIST_LIMIT, MAX_TASK_LIST_LIMIT } from '../shared/types';
+import {
+  DEFAULT_TASK_LIST_LIMIT,
+  HEALTH_ENTRY_KINDS,
+  MAX_TASK_LIST_LIMIT,
+} from '../shared/types';
 import {
   DEFAULT_HEALTH_ENTRY_LIST_LIMIT,
   MAX_HEALTH_ENTRY_LIST_LIMIT,
@@ -180,7 +184,7 @@ export function registerLifegameTools(
   server.registerTool(
     'list_health_entries',
     {
-      description: `記録済みの健康記録（体重測定・運動実績・睡眠実績）を新しい順に返します。kindでどの種類かが分かります。種類での絞り込みはできません。fromとtoはoccurred_on（記録が属するローカル日付）に対する境界で、どちらも含みます。1回の呼び出しは最大${MAX_HEALTH_ENTRY_LIST_LIMIT}件で、続きがある場合はtruncated=trueとnext_offsetを返します。返るのは日付単位の粒度で、測定時刻や記録元（手入力か端末からの同期か）は含みません。記録が無い日は行として現れません。運動の記録が無い日は「運動しなかった日」ではなく「記録が残らなかった日」なので、そのつもりで扱ってください。`,
+      description: `記録済みの健康記録（体重測定・運動実績・睡眠実績）を新しい順に返します。kindを指定すると1種類だけに絞れます。省略すると3種類が混ざって返り、各行のkindで判別できます。fromとtoはoccurred_on（記録が属するローカル日付）に対する境界で、どちらも含みます。1回の呼び出しは最大${MAX_HEALTH_ENTRY_LIST_LIMIT}件で、続きがある場合はtruncated=trueとnext_offsetを返します。返るのは日付単位の粒度で、測定時刻や記録元（手入力か端末からの同期か）は含みません。記録が無い日は行として現れません。運動の記録が無い日は「運動しなかった日」ではなく「記録が残らなかった日」なので、そのつもりで扱ってください。`,
       inputSchema: {
         from: z
           .string()
@@ -192,6 +196,10 @@ export function registerLifegameTools(
           .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 形式で指定してください')
           .optional()
           .describe('この日以前の記録に絞る。YYYY-MM-DD'),
+        kind: z
+          .enum(HEALTH_ENTRY_KINDS)
+          .optional()
+          .describe('1種類だけに絞る。省略すると3種類すべて'),
         limit: z
           .number()
           .int()
@@ -210,7 +218,7 @@ export function registerLifegameTools(
       },
       annotations: { readOnlyHint: true, destructiveHint: false },
     },
-    async ({ from, to, limit, offset }) => {
+    async ({ from, to, kind, limit, offset }) => {
       try {
         await authorize('health:read');
         return jsonToolResult(
@@ -220,6 +228,7 @@ export function registerLifegameTools(
             // means "no bound" to the query builder.
             ...(from === undefined ? {} : { from }),
             ...(to === undefined ? {} : { to }),
+            ...(kind === undefined ? {} : { kind }),
             limit,
             offset,
           }),

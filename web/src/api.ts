@@ -8,6 +8,7 @@ import type {
   HealthEntriesResponse,
   HealthEntry,
   HealthEntryCreateInput,
+  HealthEntryKind,
   HealthEntryUpdateInput,
   SavedLink,
   SavedLinkCreateInput,
@@ -118,6 +119,7 @@ export async function removeConnection(id: string): Promise<void> {
 export interface HealthEntriesQuery {
   from?: string;
   to?: string;
+  kind?: HealthEntryKind;
   limit?: number;
   offset?: number;
 }

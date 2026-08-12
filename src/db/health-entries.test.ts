@@ -314,6 +314,102 @@ describe('health entries on real D1', () => {
   });
 });
 
+describe('filtering the history by kind', () => {
+  // The filter has to reach the query rather than the returned page: with a
+  // page size of 2 and the matches sitting behind three non-matches, anything
+  // filtering after the cut would answer "none" for records that exist.
+  async function seed() {
+    await createHealthEntry(env.DB, {
+      kind: 'weight',
+      occurred_on: '2026-08-05',
+      weight_kg: 68,
+    });
+    for (const day of ['2026-08-06', '2026-08-07', '2026-08-08']) {
+      await createHealthEntry(env.DB, {
+        kind: 'exercise',
+        occurred_on: day,
+        activity: 'ウォーキング',
+      });
+    }
+  }
+
+  it('returns only the requested kind, across the page boundary', async () => {
+    await seed();
+
+    const page = await listHealthEntries(env.DB, {
+      kind: 'weight',
+      limit: 2,
+      offset: 0,
+    });
+
+    expect(page.entries).toHaveLength(1);
+    expect(page.entries[0]).toMatchObject({
+      kind: 'weight',
+      occurred_on: '2026-08-05',
+    });
+    expect(page.truncated).toBe(false);
+  });
+
+  it('paginates within the filtered set, not the whole history', async () => {
+    await seed();
+
+    const first = await listHealthEntries(env.DB, {
+      kind: 'exercise',
+      limit: 2,
+      offset: 0,
+    });
+    const second = await listHealthEntries(env.DB, {
+      kind: 'exercise',
+      limit: 2,
+      offset: first.next_offset ?? 0,
+    });
+
+    expect(first.entries.map((entry) => entry.occurred_on)).toEqual([
+      '2026-08-08',
+      '2026-08-07',
+    ]);
+    expect(first.truncated).toBe(true);
+    expect(second.entries.map((entry) => entry.occurred_on)).toEqual([
+      '2026-08-06',
+    ]);
+    expect(second.truncated).toBe(false);
+    expect(
+      [...first.entries, ...second.entries].every(
+        (entry) => entry.kind === 'exercise',
+      ),
+    ).toBe(true);
+  });
+
+  it('combines the kind filter with the date bounds', async () => {
+    await seed();
+
+    const page = await listHealthEntries(env.DB, {
+      kind: 'exercise',
+      from: '2026-08-07',
+      to: '2026-08-08',
+    });
+
+    expect(page.entries.map((entry) => entry.occurred_on)).toEqual([
+      '2026-08-08',
+      '2026-08-07',
+    ]);
+  });
+
+  it('rejects a kind that is not one of the three', async () => {
+    await expect(
+      listHealthEntries(env.DB, { kind: 'blood_pressure' as never }),
+    ).rejects.toThrow(HealthEntryValidationError);
+  });
+
+  it('returns every kind when no filter is given', async () => {
+    await seed();
+
+    const page = await listHealthEntries(env.DB, { limit: 50 });
+
+    expect(page.entries).toHaveLength(4);
+  });
+});
+
 describe('sleep entries', () => {
   const sleep = (overrides: Partial<SyncedHealthRecord> = {}) =>
     ({
