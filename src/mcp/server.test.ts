@@ -214,6 +214,118 @@ describe('MCP tool registration', () => {
     });
   });
 
+  // The tool exists to answer questions over a date range, so the range has to
+  // survive the trip to the query. The test above passes defaults only and its
+  // fake throws the bind arguments away, so on its own it cannot tell a correct
+  // hand-off from one that swapped from/to or dropped the page size.
+  it('passes from, to and the page bounds through to the query in order', async () => {
+    const bound: unknown[][] = [];
+    let statement = '';
+    // limit + 1 rows come back, which is how listHealthEntries detects that a
+    // further page exists — so this also pins truncated and next_offset.
+    const rows = [1, 2, 3].map((id) => ({
+      id,
+      kind: 'exercise',
+      occurred_on: '2026-08-10',
+      weight_kg: null,
+      activity: 'ウォーキング',
+      duration_minutes: 10,
+      note: '',
+      created_at: '2026-08-10 00:00:00',
+      updated_at: '2026-08-10 00:00:00',
+    }));
+    const db = {
+      prepare: (sql: string) => {
+        statement = sql;
+        return {
+          bind: (...args: unknown[]) => {
+            bound.push(args);
+            return {
+              first: async () => null,
+              all: async () => ({ results: rows }),
+            };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    registerLifegameTools(server, envFor(db), () => ({
+      email: 'owner@example.com',
+      scopes: ['health:read'],
+    }));
+    const tool = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          { handler: (input: unknown) => Promise<unknown> }
+        >;
+      }
+    )._registeredTools.list_health_entries;
+
+    const result = (await tool.handler({
+      from: '2026-07-12',
+      to: '2026-08-10',
+      limit: 2,
+      offset: 4,
+    })) as { isError?: true; content: Array<{ text: string }> };
+
+    expect(result.isError).toBeUndefined();
+    expect(statement).toContain('occurred_on >= ?');
+    expect(statement).toContain('occurred_on <= ?');
+    // limit + 1 is what the query asks for; the extra row is the lookahead.
+    expect(bound.at(-1)).toEqual(['2026-07-12', '2026-08-10', 3, 4]);
+
+    const page = JSON.parse(result.content[0].text) as {
+      entries: unknown[];
+      truncated: boolean;
+      next_offset: number | null;
+    };
+    expect(page.entries).toHaveLength(2);
+    expect(page.truncated).toBe(true);
+    expect(page.next_offset).toBe(6);
+  });
+
+  // An omitted bound must reach the query as no bound at all, not as a filter on
+  // undefined. The two read the same at the call site and do not at the WHERE.
+  it('omits the date filters entirely when neither bound is given', async () => {
+    const bound: unknown[][] = [];
+    let statement = '';
+    const db = {
+      prepare: (sql: string) => {
+        statement = sql;
+        return {
+          bind: (...args: unknown[]) => {
+            bound.push(args);
+            return {
+              first: async () => null,
+              all: async () => ({ results: [] }),
+            };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const server = new McpServer({ name: 'test', version: '1.0.0' });
+    registerLifegameTools(server, envFor(db), () => ({
+      email: 'owner@example.com',
+      scopes: ['health:read'],
+    }));
+    const tool = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          { handler: (input: unknown) => Promise<unknown> }
+        >;
+      }
+    )._registeredTools.list_health_entries;
+
+    await tool.handler({ limit: 50, offset: 0 });
+
+    expect(statement).not.toContain('WHERE');
+    expect(bound.at(-1)).toEqual([51, 0]);
+  });
+
   it('reports a bad date range from list_health_entries as a tool error', async () => {
     const server = new McpServer({ name: 'test', version: '1.0.0' });
     registerLifegameTools(server, envFor(liveDb()), () => ({

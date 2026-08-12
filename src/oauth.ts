@@ -21,7 +21,13 @@ const SCOPE_DESCRIPTIONS: Record<SupportedScope, string> = {
   'tasks:write': 'lifegameのタスクを追加・変更・削除する',
   'calendar:read': 'Googleカレンダー（private）の予定と祝日を読む',
   'health:write': '端末で読んだ体重測定・運動実績をlifegameへ同期する',
-  'health:read': 'lifegameに記録された体重測定・運動実績を読む',
+  // Says what the scope reaches, not what happens to be stored today. The read
+  // is over health_entries as a whole and filters no kind out, so a kind added
+  // later is readable the moment it lands — and a consent screen that listed the
+  // current inventory would go quietly stale at exactly that moment. Sleep is
+  // named here for that reason, ahead of the sync that starts producing it.
+  'health:read':
+    'lifegameに記録された健康記録（体重測定・運動実績・睡眠実績）を読む',
 };
 
 const CONSENT_CSRF_COOKIE_PREFIX = '__Host-lifegame-consent-';

@@ -180,7 +180,7 @@ export function registerLifegameTools(
   server.registerTool(
     'list_health_entries',
     {
-      description: `記録済みの体重測定と運動実績を新しい順に返します。fromとtoはoccurred_on（記録が属するローカル日付）に対する境界で、どちらも含みます。1回の呼び出しは最大${MAX_HEALTH_ENTRY_LIST_LIMIT}件で、続きがある場合はtruncated=trueとnext_offsetを返します。返るのは日付単位の粒度で、測定時刻や記録元（手入力か端末からの同期か）は含みません。記録が無い日は行として現れません。運動の記録が無い日は「運動しなかった日」ではなく「記録が残らなかった日」なので、そのつもりで扱ってください。`,
+      description: `記録済みの健康記録（体重測定・運動実績・睡眠実績）を新しい順に返します。kindでどの種類かが分かります。種類での絞り込みはできません。fromとtoはoccurred_on（記録が属するローカル日付）に対する境界で、どちらも含みます。1回の呼び出しは最大${MAX_HEALTH_ENTRY_LIST_LIMIT}件で、続きがある場合はtruncated=trueとnext_offsetを返します。返るのは日付単位の粒度で、測定時刻や記録元（手入力か端末からの同期か）は含みません。記録が無い日は行として現れません。運動の記録が無い日は「運動しなかった日」ではなく「記録が残らなかった日」なので、そのつもりで扱ってください。`,
       inputSchema: {
         from: z
           .string()

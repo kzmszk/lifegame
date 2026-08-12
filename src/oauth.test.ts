@@ -279,6 +279,20 @@ describe('OAuth consent CSRF protection', () => {
     expect(html).toContain('Googleカレンダー');
   });
 
+  // The read is over health_entries as a whole and filters no kind out, so the
+  // consent screen has to name every kind the grant reaches — including sleep,
+  // whose rows the companion's sync starts producing separately. A screen that
+  // described the current inventory would understate the grant the moment a new
+  // kind landed, and the permission would have been taken without it.
+  it('names every health kind health:read reaches, sleep included', async () => {
+    const html = await consentHtmlForScope(['health:read']);
+
+    expect(html).toContain('<code>health:read</code>');
+    for (const kind of ['体重測定', '運動実績', '睡眠実績']) {
+      expect(html).toContain(kind);
+    }
+  });
+
   it('describes only the requested scopes, not the whole catalogue', async () => {
     const html = await consentHtmlForScope(['tasks:read']);
 
