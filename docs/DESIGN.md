@@ -205,13 +205,14 @@ Worker に MCP サーバー(`/mcp`)を追加し、Claude アプリ・Claude Code
 
 ### MCP ツール (read/write 両対応)
 
-| ツール              | 種別  | 役割                                                                                                                                 |
-| ------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `get_daily_summary` | read  | 今日のタスク・期限切れ・Inbox 件数・今日完了分を1回の呼び出しで返す集約ビュー(ブリーフィング用)                                      |
-| `list_tasks`        | read  | `view=today\|inbox\|all` 相当の一覧取得。`limit` (既定値100) と `offset` を指定でき、`truncated` と `next_offset` で続きの有無を示す |
-| `create_task`       | write | タスク追加。Claude が日本語を解釈し、構造化済み(`title, due_date, due_time, priority, tags`)で渡す                                   |
-| `update_task`       | write | 更新(延期・タイトル変更・完了/未完了トグル)                                                                                          |
-| `delete_task`       | write | 削除                                                                                                                                 |
+| ツール                | 種別  | 役割                                                                                                                                                                                   |
+| --------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_daily_summary`   | read  | 今日のタスク・期限切れ・Inbox 件数・今日完了分を1回の呼び出しで返す集約ビュー(ブリーフィング用)                                                                                        |
+| `list_tasks`          | read  | `view=today\|inbox\|all` 相当の一覧取得。`limit` (既定値100) と `offset` を指定でき、`truncated` と `next_offset` で続きの有無を示す                                                   |
+| `create_task`         | write | タスク追加。Claude が日本語を解釈し、構造化済み(`title, due_date, due_time, priority, tags`)で渡す                                                                                     |
+| `update_task`         | write | 更新(延期・タイトル変更・完了/未完了トグル)                                                                                                                                            |
+| `delete_task`         | write | 削除                                                                                                                                                                                   |
+| `list_health_entries` | read  | 体重測定・運動実績の一覧。`from` / `to` は `occurred_on` に対する両端を含む境界。`limit` (既定値50) と `offset`、`truncated` と `next_offset` はタスク一覧と同じ。`health:read` が要る |
 
 - JST の「今日」判定は Phase 1 と同様にサーバー側(`lib/time.ts`)で行い、Claude に日付境界を考えさせない
 - `completed_at` と `status` の連動契約(セクション7)は MCP 経由の更新にもそのまま適用する
@@ -651,11 +652,14 @@ SPA に `/health` と下部タブ「健康」を追加し、1画面の上から�
 
 - 健康記録の持ち主は Cloudflare Access で許可された単一利用者。Phase 1 と同じ単一ユーザー前提なので
   `user_id` は追加しない
-- **初版の健康記録はブラウザ API だけに公開し、MCP ツールと `get_daily_summary`、
-  朝のブリーフィングには含めない**
+- 初版の健康記録はブラウザ API だけに公開していた。現在は `list_health_entries` として MCP からも
+  読める。`get_daily_summary` と朝のブリーフィングには**今も含めない** — 健康記録を見たいときに
+  ツールを呼ぶのと、毎朝の定型文に混ぜるのは別の話で、後者は同意していない
 - 既存の `tasks:read` / `tasks:write` / `calendar:read` は健康記録への権限を与えない。
-  将来 MCP から読む場合は `health:read`、書く場合は `health:write` を追加し、既存クライアントに
-  再同意を求めてからツールを公開する
+  読み出しは `health:read`、書き込み（同期）は `health:write` で、どちらも既定スコープに入れて
+  いないため、既存クライアントは再同意しない限り健康記録に届かない
+- `health:read` と `health:write` は互いを含意しない。companion は書くだけで読まず、MCP
+  クライアントは読むだけで書かない
 - HealthKit、Fitbit、Google Fit など外部サービスへの同期・エクスポートも初版では行わない
 
 健康情報はタスクより慎重に扱うべき別のデータ源であり、「既に接続済みだから」という理由で
@@ -669,7 +673,10 @@ SPA に `/health` と下部タブ「健康」を追加し、1画面の上から�
 - ウェアラブルや外部ヘルスサービスからの自動取り込み
 - 医療上の評価、助言、異常値判定
 - 複数利用者、共有、公開プロフィール
-- MCP と朝のブリーフィングからの参照・更新
+- MCP からの**更新**（追加・変更・削除）。読み取りは `list_health_entries` として公開したが、
+  書き込みは公開しない。健康記録を直せるのはブラウザと companion の同期だけ
+- 朝のブリーフィングと `get_daily_summary` への健康記録の混入。読みたいときにツールを呼ぶのと、
+  毎朝の定型文に黙って混ぜるのは別の話で、後者には同意していない（§14.5）
 
 ### Phase 2 初版のタスク分解
 
