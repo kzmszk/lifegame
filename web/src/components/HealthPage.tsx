@@ -319,20 +319,25 @@ export function HealthHistory({
                 <article className="health-entry-card" key={entry.id}>
                   <div className="health-entry-content">
                     <div className="health-entry-kind">
-                      {entry.kind === 'weight' ? '体重測定' : '運動実績'}
+                      {entryKindLabel(entry)}
                     </div>
                     <strong>{entrySummary(entry)}</strong>
                     {entry.note && <p>{entry.note}</p>}
                   </div>
                   <div className="health-entry-actions">
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={() => setEditingId(entry.id)}
-                      disabled={deletingId !== null}
-                    >
-                      修正
-                    </button>
+                    {/* Sleep has no manual form to edit it back through, so the
+                        button that would open one is not offered. Delete still
+                        is: a wrong night should be removable. */}
+                    {entry.kind !== 'sleep' && (
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => setEditingId(entry.id)}
+                        disabled={deletingId !== null}
+                      >
+                        修正
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="health-delete-button"
@@ -370,10 +375,22 @@ export function HealthHistory({
   );
 }
 
+function entryKindLabel(entry: HealthEntry): string {
+  if (entry.kind === 'weight') return '体重測定';
+  if (entry.kind === 'exercise') return '運動実績';
+  return '睡眠実績';
+}
+
 function entrySummary(entry: HealthEntry): string {
-  return entry.kind === 'weight'
-    ? `${entry.weight_kg} kg`
-    : `${entry.activity}${entry.duration_minutes === null ? '' : ` · ${entry.duration_minutes}分`}`;
+  if (entry.kind === 'weight') return `${entry.weight_kg} kg`;
+  if (entry.kind === 'exercise') {
+    return `${entry.activity}${entry.duration_minutes === null ? '' : ` · ${entry.duration_minutes}分`}`;
+  }
+  // A night reads as hours, not as the 445 minutes the row stores.
+  const hours = Math.floor(entry.duration_minutes / 60);
+  const minutes = entry.duration_minutes % 60;
+  if (hours === 0) return `${minutes}分`;
+  return minutes === 0 ? `${hours}時間` : `${hours}時間${minutes}分`;
 }
 
 interface HealthEntryEditorProps {

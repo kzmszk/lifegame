@@ -41,6 +41,10 @@ test.afterEach(async ({ request }) => {
   if (!response.ok()) return;
   const { entries } = (await response.json()) as HealthEntriesResponse;
   for (const entry of entries) {
+    // Sleep can only arrive from the companion's sync, so no sleep row is ever
+    // this run's to clean up — and deleting a real night would be worse than
+    // leaving a stray test row behind.
+    if (entry.kind === 'sleep') continue;
     const marker = entry.kind === 'weight' ? entry.note : entry.activity;
     if (!marker.includes(RUN_ID)) continue;
     const deleted = await request.delete(`/api/health-entries/${entry.id}`);

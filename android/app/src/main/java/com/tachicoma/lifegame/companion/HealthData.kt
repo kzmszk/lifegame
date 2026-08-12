@@ -27,16 +27,17 @@ object HealthPermissions {
  *
  * Sending splits the second point into three facts a reader has to have before granting the
  * permission — what leaves the device, where it goes, and when — so ADR 0001 fixes the summary at
- * four points rather than making one sentence carry all of it. Sleep gets its own line because
- * "we read it but never send it" is the kind of distinction that disappears inside a longer one.
+ * four points rather than making one sentence carry all of it. The three types now share one
+ * sending rule, so they share one line; what still earns a line of its own is "only when you press
+ * sync", because an automatic background upload is what a reader would most reasonably fear here.
  */
 object PrivacyPolicy {
     const val URL = "https://lifegame.tachicoma.com/privacy"
 
     val summary: List<String> = listOf(
         "読み取るのは体重測定・運動実績・睡眠実績の3種類だけです。",
-        "体重測定と運動実績は、あなたが同期を押したときだけ lifegame（lifegame.tachicoma.com）へ送ります。",
-        "睡眠実績は端末の外へ送りません。自動での送信もしません。",
+        "この3種類を lifegame（lifegame.tachicoma.com）へ送ります。",
+        "送るのはあなたが同期を押したときだけです。自動での送信はしません。",
         "第三者提供・広告・分析には使いません。",
     )
 }
@@ -86,6 +87,7 @@ data class SleepSession(
     val startZoneOffset: ZoneOffset?,
     val endZoneOffset: ZoneOffset?,
     val title: String?,
+    val externalId: String = "",
 )
 
 enum class HealthConnectAvailability {
@@ -137,7 +139,7 @@ object HealthDuration {
     }
 }
 
-/** Records that are eligible for the write-only /sync endpoint. Sleep is deliberate here. */
+/** Records that are eligible for the write-only /sync endpoint. */
 sealed interface HealthSyncRecord {
     val externalId: String
 
@@ -156,13 +158,14 @@ sealed interface HealthSyncRecord {
         val title: String,
     ) : HealthSyncRecord
 
-    // Kept as an input type so a caller cannot accidentally turn a sleep record into a
-    // weight/exercise payload. The builder ignores it and it is never read by sync.
+    // The server files a night under the local date it ENDED, and works that out from the
+    // instant this record sends. So the wake end is what the payload carries, together with
+    // the offset in force at that end: a session that crosses a DST boundary has two.
     data class Sleep(
         override val externalId: String,
         val startedAt: Instant,
         val endedAt: Instant,
-        val title: String?,
+        val endZoneOffset: ZoneOffset?,
     ) : HealthSyncRecord
 }
 
@@ -171,6 +174,7 @@ object HealthSyncSelection {
         grantedPermissions: Set<String>,
         weights: List<WeightMeasurement>,
         exercises: List<ExerciseSession>,
+        sleeps: List<SleepSession> = emptyList(),
     ): List<HealthSyncRecord> = buildList {
         if (HealthPermissions.READ_WEIGHT in grantedPermissions) {
             addAll(weights.map {
@@ -182,10 +186,15 @@ object HealthSyncSelection {
                 HealthSyncRecord.Exercise(it.externalId, it.startedAt, it.endedAt, it.startZoneOffset, it.title)
             })
         }
+        if (HealthPermissions.READ_SLEEP in grantedPermissions) {
+            addAll(sleeps.map {
+                HealthSyncRecord.Sleep(it.externalId, it.startedAt, it.endedAt, it.endZoneOffset)
+            })
+        }
     }
 }
 
-enum class HealthSyncKind { WEIGHT, EXERCISE }
+enum class HealthSyncKind { WEIGHT, EXERCISE, SLEEP }
 
 data class HealthSyncPayloadRecord(
     val kind: HealthSyncKind,
@@ -198,7 +207,13 @@ data class HealthSyncPayloadRecord(
     fun toJson(): String = buildString {
         append('{')
         append("\"kind\":")
-        appendJsonString(if (kind == HealthSyncKind.WEIGHT) "weight" else "exercise")
+        appendJsonString(
+            when (kind) {
+                HealthSyncKind.WEIGHT -> "weight"
+                HealthSyncKind.EXERCISE -> "exercise"
+                HealthSyncKind.SLEEP -> "sleep"
+            },
+        )
         append(",\"external_id\":")
         appendJsonString(externalId)
         append(",\"occurred_at\":")
@@ -216,6 +231,13 @@ data class HealthSyncPayloadRecord(
                     append(",\"duration_minutes\":")
                     append(it)
                 }
+            }
+
+            // Not optional the way an exercise session's is: the server refuses a night
+            // with no length, and the builder never produces one.
+            HealthSyncKind.SLEEP -> {
+                append(",\"duration_minutes\":")
+                append(durationMinutes!!)
             }
         }
         append('}')
@@ -285,8 +307,6 @@ object HealthSyncPayloadBuilder {
         var skipped = 0
 
         records.forEach { source ->
-            if (source is HealthSyncRecord.Sleep) return@forEach
-
             val externalId = source.externalId.trim()
             if (externalId.isEmpty() || externalId.length > MAX_EXTERNAL_ID_LENGTH || !seen.add(externalId)) {
                 skipped += 1
@@ -297,7 +317,7 @@ object HealthSyncPayloadBuilder {
             val payload = when (source) {
                 is HealthSyncRecord.Weight -> weight(source, externalId, fallbackZone)
                 is HealthSyncRecord.Exercise -> exercise(source, externalId, fallbackZone)
-                is HealthSyncRecord.Sleep -> null
+                is HealthSyncRecord.Sleep -> sleep(source, externalId, fallbackZone)
             }
             if (payload == null) {
                 skipped += 1
@@ -365,6 +385,23 @@ object HealthSyncPayloadBuilder {
         )
     }
 
+    // The wake end, not the start: the server derives the local date from whatever instant
+    // arrives, and filing a night under the morning it was slept into is what keeps a 23:30
+    // bedtime and a 01:00 one on the same day.
+    private fun sleep(
+        source: HealthSyncRecord.Sleep,
+        externalId: String,
+        fallbackZone: ZoneId,
+    ): HealthSyncPayloadRecord? {
+        val duration = validDurationMinutes(source.startedAt, source.endedAt) ?: return null
+        return HealthSyncPayloadRecord(
+            kind = HealthSyncKind.SLEEP,
+            externalId = externalId,
+            occurredAt = occurredAt(source.endedAt, source.endZoneOffset, fallbackZone),
+            durationMinutes = duration,
+        )
+    }
+
     fun occurredAt(instant: Instant, recordedOffset: ZoneOffset?, fallbackZone: ZoneId): String {
         // A null Health Connect offset is resolved locally. OffsetDateTime never emits RFC 3339's
         // unknown -00:00 marker; zero is represented as the known UTC offset Z.
@@ -403,7 +440,7 @@ object HealthSyncPayloadBuilder {
     private fun HealthSyncRecord.syncType(): HealthSyncType = when (this) {
         is HealthSyncRecord.Weight -> HealthSyncType.WEIGHT
         is HealthSyncRecord.Exercise -> HealthSyncType.EXERCISE
-        is HealthSyncRecord.Sleep -> error("sleep records are not sync targets")
+        is HealthSyncRecord.Sleep -> HealthSyncType.SLEEP
     }
 
     private const val JSON_ARRAY_WRAPPER_BYTES = 2

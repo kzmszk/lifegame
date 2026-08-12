@@ -48,7 +48,7 @@ export interface HealthEntryListOptions {
 
 interface HealthEntryRow {
   id: number;
-  kind: 'weight' | 'exercise';
+  kind: 'weight' | 'exercise' | 'sleep';
   occurred_on: string;
   weight_kg: number | null;
   activity: string | null;
@@ -153,7 +153,19 @@ function normalizeCreateInput(input: unknown): NormalizedCreateInput {
     };
   }
 
-  invalid('kind は weight または exercise で指定してください');
+  // Sleep is storable but not enterable: it only ever arrives from the
+  // companion's sync, which goes through upsertSyncedHealthEntries rather than
+  // here. Naming it keeps the refusal from reading as "sleep is not a kind".
+  invalid(sleepIsSyncOnly(input) ? SLEEP_IS_SYNC_ONLY : KIND_MUST_BE_ENTERABLE);
+}
+
+const KIND_MUST_BE_ENTERABLE =
+  'kind は weight または exercise で指定してください';
+const SLEEP_IS_SYNC_ONLY =
+  '睡眠実績は端末からの同期でのみ記録できます。手入力はできません';
+
+function sleepIsSyncOnly(input: Record<string, unknown>): boolean {
+  return input.kind === 'sleep';
 }
 
 type NormalizedUpdateInput =
@@ -175,7 +187,9 @@ function normalizeUpdateInput(input: unknown): NormalizedUpdateInput {
   if (!isRecord(input))
     invalid('健康記録は JSON オブジェクトで指定してください');
   if (input.kind !== 'weight' && input.kind !== 'exercise')
-    invalid('kind は weight または exercise で指定してください');
+    invalid(
+      sleepIsSyncOnly(input) ? SLEEP_IS_SYNC_ONLY : KIND_MUST_BE_ENTERABLE,
+    );
   let occurredOn: string | undefined;
   if (hasOwn(input, 'occurred_on')) {
     const value = input.occurred_on;
@@ -258,6 +272,13 @@ function toHealthEntry(row: HealthEntryRow): HealthEntry {
       activity: row.activity,
       duration_minutes:
         row.duration_minutes === null ? null : Number(row.duration_minutes),
+    };
+  }
+  if (row.kind === 'sleep' && row.duration_minutes !== null) {
+    return {
+      ...common,
+      kind: 'sleep',
+      duration_minutes: Number(row.duration_minutes),
     };
   }
   throw new Error('保存された健康記録の内容が不正です');

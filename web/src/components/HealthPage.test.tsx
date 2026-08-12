@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   ExerciseSession,
   HealthEntry,
+  SleepSession,
   WeightMeasurement,
 } from '../../../src/shared/types';
 import { groupHealthEntries, localDateInputValue } from '../health';
@@ -28,6 +29,16 @@ const exercise: ExerciseSession = {
   note: '',
   created_at: '2026-08-06 00:00:00',
   updated_at: '2026-08-06 00:00:00',
+};
+
+const sleep: SleepSession = {
+  id: 3,
+  kind: 'sleep',
+  occurred_on: '2026-08-11',
+  duration_minutes: 445,
+  note: '',
+  created_at: '2026-08-11 00:00:00',
+  updated_at: '2026-08-11 00:00:00',
 };
 
 describe('health entry components', () => {
@@ -89,5 +100,28 @@ describe('health entry components', () => {
     expect(html).toContain('修正');
     expect(html).toContain('削除');
     expect(html).toContain('さらに読み込む');
+  });
+
+  // Sleep arrives only from the companion's sync and has no form to edit it back
+  // through, so the history shows it in hours and offers deletion but not
+  // correction. 445 minutes reads as 7時間25分, not as 445.
+  it('shows a sleep session in hours and offers no correction button', () => {
+    const html = renderToStaticMarkup(
+      <HealthHistory
+        entries={[sleep]}
+        truncated={false}
+        loadingMore={false}
+        loadMoreError={null}
+        onLoadMore={() => undefined}
+        onUpdated={() => Promise.resolve()}
+        onDeleted={() => Promise.resolve()}
+      />,
+    );
+
+    expect(html).toContain('睡眠実績');
+    expect(html).toContain('7時間25分');
+    expect(html).not.toContain('445');
+    expect(html).not.toContain('修正');
+    expect(html).toContain('削除');
   });
 });

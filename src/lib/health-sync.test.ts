@@ -28,6 +28,18 @@ function exercise(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// occurred_at is the wake instant, so occurred_on comes out as the morning the
+// night was slept into rather than the evening it started.
+function sleep(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: 'sleep',
+    external_id: 'hc-sleep-1',
+    occurred_at: '2026-08-11T07:00:00+09:00',
+    duration_minutes: 445,
+    ...overrides,
+  };
+}
+
 function rejects(body: unknown): string {
   try {
     normalizeSyncPayload(body);
@@ -140,8 +152,46 @@ describe('normalizeSyncPayload', () => {
     expect(rejects([weight(), weight()])).toContain('重複');
   });
 
-  it('rejects sleep by name rather than dropping it', () => {
-    expect(rejects([{ ...weight(), kind: 'sleep' }])).toContain('kind');
+  it('normalizes a sleep session onto the day it ended', () => {
+    expect(normalizeSyncPayload([sleep()])).toEqual([
+      {
+        kind: 'sleep',
+        external_id: 'hc-sleep-1',
+        occurred_on: '2026-08-11',
+        occurred_at: '2026-08-11T07:00:00+09:00',
+        weight_kg: null,
+        activity: null,
+        duration_minutes: 445,
+      },
+    ]);
+  });
+
+  // Unlike an exercise session, which is still worth a row when its length is
+  // unusable, a night with no length says nothing.
+  it('requires a length on a sleep session', () => {
+    expect(rejects([sleep({ duration_minutes: null })])).toContain(
+      'duration_minutes',
+    );
+    expect(rejects([sleep({ duration_minutes: undefined })])).toContain(
+      'duration_minutes',
+    );
+    expect(rejects([sleep({ duration_minutes: 0 })])).toContain(
+      'duration_minutes',
+    );
+    expect(rejects([sleep({ duration_minutes: 1441 })])).toContain(
+      'duration_minutes',
+    );
+  });
+
+  it('rejects a sleep session carrying weight or exercise fields', () => {
+    expect(rejects([sleep({ weight_kg: 68 })])).toContain('睡眠実績');
+    expect(rejects([sleep({ activity: 'ランニング' })])).toContain('睡眠実績');
+  });
+
+  it('rejects an unknown kind by name rather than dropping it', () => {
+    expect(rejects([{ ...weight(), kind: 'blood_pressure' }])).toContain(
+      'kind',
+    );
   });
 
   it('rejects mixed shapes', () => {

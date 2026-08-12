@@ -12,6 +12,7 @@ export default defineProject({
       'src/db/saved-links.test.ts',
       'e2e/**',
       'src/db/migration-0004.test.ts',
+      'src/db/migration-0008.test.ts',
       'src/db/tasks.test.ts',
       'src/routes/api.test.ts',
       'src/routes/sync.test.ts',
